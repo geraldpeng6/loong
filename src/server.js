@@ -38,6 +38,7 @@ const LOONG_PASSWORD = process.env.LOONG_PASSWORD || process.env.JARVIS_PASSWORD
 const PASSWORD_REQUIRED = Boolean(LOONG_PASSWORD);
 const WS_HEARTBEAT_MS = Number(process.env.LOONG_WS_HEARTBEAT_MS || 30000);
 const TASK_TIMEOUT_MS = Number(process.env.LOONG_TASK_TIMEOUT_MS || 10 * 60 * 1000);
+const SESSION_CACHE_TTL_MS = Number(process.env.LOONG_SESSION_CACHE_TTL_MS || 3000);
 
 const IMESSAGE_ENABLED = ["1", "true", "yes"].includes(
 	String(process.env.IMESSAGE_ENABLED || "").toLowerCase(),
@@ -618,10 +619,19 @@ const listSessionFiles = (rootDir) => {
 };
 
 const getSessionEntries = (agent) => {
+	const now = Date.now();
+	if (
+		SESSION_CACHE_TTL_MS > 0
+		&& agent.sessionCache
+		&& now - agent.sessionCache.updatedAt < SESSION_CACHE_TTL_MS
+	) {
+		return agent.sessionCache.entries;
+	}
+
 	const sessionFiles = listSessionFiles(agent.sessionDir).sort();
 	const currentPath = agent.currentSessionFile ? resolve(agent.currentSessionFile) : null;
 
-	return sessionFiles.map((filePath) => {
+	const entries = sessionFiles.map((filePath) => {
 		const relativePath = relative(agent.sessionDir, filePath);
 		const normalized = relativePath.replace(/\\/g, "/");
 		const withoutExt = normalized.replace(/\.jsonl$/, "");
@@ -643,6 +653,9 @@ const getSessionEntries = (agent) => {
 			isCurrent: currentPath && resolve(filePath) === currentPath,
 		};
 	});
+
+	agent.sessionCache = { entries, updatedAt: now };
+	return entries;
 };
 
 const pad2 = (value) => String(value).padStart(2, "0");
@@ -1561,6 +1574,7 @@ function createAgentRuntime(config) {
 		busy: false,
 		currentTask: null,
 		offline: false,
+		sessionCache: null,
 		imessageSessions: new Map(),
 	};
 
