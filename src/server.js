@@ -42,6 +42,7 @@ const LOONG_DEBUG = ["1", "true", "yes"].includes(
 const WS_HEARTBEAT_MS = Number(process.env.LOONG_WS_HEARTBEAT_MS || 30000);
 const TASK_TIMEOUT_MS = Number(process.env.LOONG_TASK_TIMEOUT_MS || 10 * 60 * 1000);
 const SESSION_CACHE_TTL_MS = Number(process.env.LOONG_SESSION_CACHE_TTL_MS || 3000);
+const AGENT_RESTART_MS = Number(process.env.LOONG_AGENT_RESTART_MS || 3000);
 
 const IMESSAGE_ENABLED = ["1", "true", "yes"].includes(
 	String(process.env.IMESSAGE_ENABLED || "").toLowerCase(),
@@ -958,17 +959,30 @@ const rejectPendingRequests = (agent, reason) => {
 	agent.pending.clear();
 };
 
+const scheduleAgentRestart = (agent) => {
+	if (AGENT_RESTART_MS < 0) return;
+	if (agent.restartTimer) return;
+	const delay = Math.max(0, AGENT_RESTART_MS);
+	agent.restartTimer = setTimeout(() => {
+		agent.restartTimer = null;
+		spawnAgentProcess(agent);
+	}, delay);
+};
+
 const handleAgentExit = async (agent, reason) => {
+	if (agent.offline && agent.restartTimer) return;
 	agent.offline = true;
 	rejectPendingRequests(agent, reason);
 	agent.queue = [];
 	if (agent.currentTask) {
 		await failCurrentTask(agent, agent.currentTask, "代理已退出，任务已取消。", { skipQueue: true });
+		scheduleAgentRestart(agent);
 		return;
 	}
 	agent.busy = false;
 	agent.currentTask = null;
 	broadcastAgentStatus(agent);
+	scheduleAgentRestart(agent);
 };
 
 const enqueueAgentPrompt = (agent, task) => {
@@ -1427,12 +1441,14 @@ function initAgents(config) {
 	for (const agentConfig of agentConfigs) {
 		const agent = createAgentRuntime(agentConfig);
 		agents.set(agent.id, agent);
-		agentList.push({
+		const entry = {
 			id: agent.id,
 			name: agent.name,
 			keywords: agent.keywords,
-			pid: agent.pi.pid,
-		});
+			pid: agent.pi?.pid,
+		};
+		agent.listEntry = entry;
+		agentList.push(entry);
 	}
 
 	const defaultId = config.defaultAgent && agents.has(config.defaultAgent)
@@ -1528,6 +1544,43 @@ function normalizeAgentConfig(config, configPath, gatewayConfig) {
 	};
 }
 
+function spawnAgentProcess(runtime) {
+	if (runtime.rl) {
+		runtime.rl.removeAllListeners();
+		runtime.rl.close();
+	}
+
+	const pi = spawn(runtime.piCmd, runtime.spawnArgs, {
+		cwd: runtime.spawnCwd,
+		stdio: ["pipe", "pipe", "inherit"],
+		env: runtime.spawnEnv,
+	});
+
+	runtime.pi = pi;
+	runtime.offline = false;
+	if (runtime.listEntry) {
+		runtime.listEntry.pid = pi.pid;
+	}
+
+	const rl = createInterface({ input: pi.stdout });
+	runtime.rl = rl;
+	rl.on("line", (line) => handleAgentLine(runtime, line));
+
+	pi.on("exit", (code, signal) => {
+		const reason = `agent ${runtime.id} exited (code=${code}, signal=${signal})`;
+		console.error(`[loong] ${reason}`);
+		void handleAgentExit(runtime, reason);
+	});
+
+	pi.on("error", (err) => {
+		const message = err instanceof Error ? err.message : String(err);
+		console.error(`[loong] agent ${runtime.id} error: ${message}`);
+		void handleAgentExit(runtime, `agent error: ${message}`);
+	});
+
+	return pi;
+}
+
 function createAgentRuntime(config) {
 	mkdirSync(config.sessionDir, { recursive: true });
 	if (config.memoryEnabled) {
@@ -1562,12 +1615,6 @@ function createAgentRuntime(config) {
 		}
 	}
 
-	const pi = spawn(piCmd, args, {
-		cwd: PI_CWD,
-		stdio: ["pipe", "pipe", "inherit"],
-		env: process.env,
-	});
-
 	const runtime = {
 		id: config.id,
 		name: config.name,
@@ -1579,7 +1626,11 @@ function createAgentRuntime(config) {
 		sessionMapFile: config.sessionMapFile,
 		notifyOnStart: config.notifyOnStart,
 		replyPrefixMode: config.replyPrefixMode,
-		pi,
+		pi: null,
+		piCmd,
+		spawnArgs: args,
+		spawnCwd: PI_CWD,
+		spawnEnv: process.env,
 		pending: new Map(),
 		requestId: 0,
 		currentSessionFile: null,
@@ -1588,17 +1639,13 @@ function createAgentRuntime(config) {
 		currentTask: null,
 		offline: false,
 		sessionCache: null,
+		restartTimer: null,
+		rl: null,
+		listEntry: null,
 		imessageSessions: new Map(),
 	};
 
-	pi.on("exit", (code, signal) => {
-		const reason = `agent ${config.id} exited (code=${code}, signal=${signal})`;
-		console.error(`[loong] ${reason}`);
-		void handleAgentExit(runtime, reason);
-	});
-
-	const rl = createInterface({ input: pi.stdout });
-	rl.on("line", (line) => handleAgentLine(runtime, line));
+	spawnAgentProcess(runtime);
 
 	return runtime;
 }
