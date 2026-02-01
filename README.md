@@ -29,6 +29,8 @@ export PI_CWD=/Users/jiale/code/loong
 export LOONG_HOME=/Users/jiale/.loong
 export LOONG_CONFIG_PATH=/Users/jiale/.loong/config.json
 export LOONG_PASSWORD=your-password
+export LOONG_NOTIFY_LOCAL_ONLY=1
+export LOONG_MAX_BODY_BYTES=262144
 export PI_EDIT_ROOT=/Users/jiale/code/loong
 
 pnpm start
@@ -151,6 +153,26 @@ Notes:
 - Web UI: `http://localhost:17800/`
 - HTTP health: `GET http://localhost:17800/health`
 - WebSocket: `ws://localhost:17800/ws`
+- HTTP API:
+  - `POST http://localhost:17800/api/notify` (local-only by default)
+  - `POST http://localhost:17800/api/ask`
+
+### POST /api/notify
+Local-only by default (`LOONG_NOTIFY_LOCAL_ONLY=0` to allow remote). JSON body:
+```json
+{
+  "text": "hello",
+  "agentId": "jarvis",
+  "scope": "agent",
+  "prefix": true
+}
+```
+- `scope`: `agent` (only clients on that agent) or `all` (broadcast).
+- `prefix`: default `true` when `agentId` is provided.
+- Request body limit via `LOONG_MAX_BODY_BYTES`.
+
+### POST /api/ask
+Send a prompt to the current agent and return its reply.
 
 ## Example WebSocket command
 Send JSON (one object per message):

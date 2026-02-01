@@ -179,6 +179,22 @@ try {
 
 	const wsAuth = new WebSocket(`ws://localhost:${PORT}/ws?password=${PASSWORD}`);
 	await waitForWsMessage(wsAuth, (msg) => msg.type === "gateway_ready");
+
+	const notifyWaiter = waitForWsMessage(
+		wsAuth,
+		(msg) => msg.type === "gateway_message" && msg.text.includes("ping"),
+	);
+	const notifyResp = await fetch(`http://localhost:${PORT}/api/notify`, {
+		method: "POST",
+		headers: { ...authHeaders, "content-type": "application/json" },
+		body: JSON.stringify({ text: "ping", agentId: "jarvis", scope: "agent" }),
+	});
+	assert.equal(notifyResp.status, 200);
+	const notifyPayload = await notifyResp.json();
+	assert.equal(notifyPayload.sentCount, 1);
+	const notifyMsg = await notifyWaiter;
+	assert.ok(notifyMsg.text);
+
 	wsAuth.send(JSON.stringify({ type: "prompt", message: "hello" }));
 	const agentEnd = await waitForWsMessage(wsAuth, (msg) => msg.type === "agent_end");
 	assert.ok(Array.isArray(agentEnd.messages));

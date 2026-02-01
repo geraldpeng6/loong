@@ -43,6 +43,13 @@ const WS_HEARTBEAT_MS = Number(process.env.LOONG_WS_HEARTBEAT_MS || 30000);
 const TASK_TIMEOUT_MS = Number(process.env.LOONG_TASK_TIMEOUT_MS || 10 * 60 * 1000);
 const SESSION_CACHE_TTL_MS = Number(process.env.LOONG_SESSION_CACHE_TTL_MS || 3000);
 const AGENT_RESTART_MS = Number(process.env.LOONG_AGENT_RESTART_MS || 3000);
+const MAX_BODY_BYTES = (() => {
+	const parsed = Number(process.env.LOONG_MAX_BODY_BYTES || 256 * 1024);
+	return Number.isFinite(parsed) ? parsed : 256 * 1024;
+})();
+const NOTIFY_LOCAL_ONLY = !["0", "false", "no"].includes(
+	String(process.env.LOONG_NOTIFY_LOCAL_ONLY || "true").toLowerCase(),
+);
 
 const IMESSAGE_ENABLED = ["1", "true", "yes"].includes(
 	String(process.env.IMESSAGE_ENABLED || "").toLowerCase(),
@@ -166,11 +173,34 @@ const sendUnauthorized = (res) => {
 	res.end("Unauthorized");
 };
 
-const readBody = (req) => {
+const sendJson = (res, statusCode, payload) => {
+	res.writeHead(statusCode, { "content-type": "application/json" });
+	res.end(JSON.stringify(payload));
+};
+
+const isLocalRequest = (req) => {
+	const remote = req.socket?.remoteAddress || "";
+	return remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1";
+};
+
+const readBody = (req, { maxBytes = MAX_BODY_BYTES } = {}) => {
 	return new Promise((resolve, reject) => {
 		let body = "";
-		req.on("data", (chunk) => { body += chunk; });
+		let bytes = 0;
+		let rejected = false;
+		req.on("data", (chunk) => {
+			if (rejected) return;
+			bytes += chunk.length;
+			if (maxBytes > 0 && bytes > maxBytes) {
+				rejected = true;
+				reject(new Error("Request body too large"));
+				req.destroy();
+				return;
+			}
+			body += chunk;
+		});
 		req.on("end", () => {
+			if (rejected) return;
 			try {
 				resolve(body ? JSON.parse(body) : {});
 			} catch (e) {
@@ -206,42 +236,63 @@ const server = createServer((req, res) => {
 		return;
 	}
 
-	// POST /api/notify - 直接推送文字给所有 WebSocket 客户端
+	// POST /api/notify - 本地主动推送文字给 WebSocket 客户端
 	if (url.pathname === "/api/notify" && req.method === "POST") {
+		if (NOTIFY_LOCAL_ONLY && !isLocalRequest(req)) {
+			sendJson(res, 403, { error: "Forbidden" });
+			return;
+		}
+
 		readBody(req)
 			.then((body) => {
-				const { text, agentId = defaultAgentId } = body;
+				const { text, agentId, scope, prefix } = body;
 				if (!text || typeof text !== "string") {
-					res.writeHead(400, { "content-type": "application/json" });
-					res.end(JSON.stringify({ error: "Missing or invalid 'text' field" }));
+					sendJson(res, 400, { error: "Missing or invalid 'text' field" });
 					return;
 				}
 
-				const agent = agents.get(agentId) || agents.get(defaultAgentId);
-				if (!agent) {
-					res.writeHead(404, { "content-type": "application/json" });
-					res.end(JSON.stringify({ error: "Agent not found" }));
+				const resolvedScope = scope || (agentId ? "agent" : "all");
+				if (resolvedScope !== "agent" && resolvedScope !== "all") {
+					sendJson(res, 400, { error: "Invalid 'scope' field" });
 					return;
 				}
 
-				const formattedText = formatAgentReply(agent, text);
+				const agent = agentId ? agents.get(agentId) : null;
+				if (resolvedScope === "agent" && !agent) {
+					sendJson(res, 404, { error: "Agent not found" });
+					return;
+				}
+
+				const shouldPrefix = typeof prefix === "boolean" ? prefix : Boolean(agent);
+				const formattedText = shouldPrefix && agent ? formatAgentReply(agent, text) : text;
 				const msg = JSON.stringify({ type: "gateway_message", text: formattedText });
 				let sentCount = 0;
 
 				for (const client of clients) {
-					if (client.readyState === WebSocket.OPEN) {
-						client.send(msg);
-						sentCount++;
+					if (client.readyState !== WebSocket.OPEN) continue;
+					if (resolvedScope === "agent") {
+						const context = webContexts.get(client);
+						if (context?.agentId !== agent?.id) continue;
 					}
+					client.send(msg);
+					sentCount++;
 				}
 
-				console.log(`[loong] /api/notify sent to ${sentCount} clients: ${text.substring(0, 50)}...`);
-				res.writeHead(200, { "content-type": "application/json" });
-				res.end(JSON.stringify({ success: true, sentCount }));
+				console.log(
+					`[loong] /api/notify scope=${resolvedScope} sent=${sentCount}: ${text.substring(0, 50)}...`,
+				);
+				sendJson(res, 200, {
+					success: true,
+					sentCount,
+					scope: resolvedScope,
+					agentId: agent?.id ?? null,
+				});
 			})
 			.catch((err) => {
-				res.writeHead(400, { "content-type": "application/json" });
-				res.end(JSON.stringify({ error: "Invalid JSON body" }));
+				const status = err?.message === "Request body too large" ? 413 : 400;
+				sendJson(res, status, {
+					error: status === 413 ? "Request body too large" : "Invalid JSON body",
+				});
 			});
 		return;
 	}
@@ -252,22 +303,19 @@ const server = createServer((req, res) => {
 			.then(async (body) => {
 				const { message, agentId = defaultAgentId, timeoutMs = 60000 } = body;
 				if (!message || typeof message !== "string") {
-					res.writeHead(400, { "content-type": "application/json" });
-					res.end(JSON.stringify({ error: "Missing or invalid 'message' field" }));
+					sendJson(res, 400, { error: "Missing or invalid 'message' field" });
 					return;
 				}
 
 				const agent = agents.get(agentId) || agents.get(defaultAgentId);
 				if (!agent) {
-					res.writeHead(404, { "content-type": "application/json" });
-					res.end(JSON.stringify({ error: "Agent not found" }));
+					sendJson(res, 404, { error: "Agent not found" });
 					return;
 				}
 
 				// 检查 agent 是否忙碌
 				if (agent.busy) {
-					res.writeHead(503, { "content-type": "application/json" });
-					res.end(JSON.stringify({ error: "Agent is busy, try again later", busy: true }));
+					sendJson(res, 503, { error: "Agent is busy, try again later", busy: true });
 					return;
 				}
 
@@ -292,16 +340,16 @@ const server = createServer((req, res) => {
 				try {
 					const reply = await replyPromise;
 					console.log(`[loong] /api/ask reply: ${reply.substring(0, 50)}...`);
-					res.writeHead(200, { "content-type": "application/json" });
-					res.end(JSON.stringify({ success: true, reply }));
+					sendJson(res, 200, { success: true, reply });
 				} catch (err) {
-					res.writeHead(504, { "content-type": "application/json" });
-					res.end(JSON.stringify({ error: err.message }));
+					sendJson(res, 504, { error: err.message });
 				}
 			})
 			.catch((err) => {
-				res.writeHead(400, { "content-type": "application/json" });
-				res.end(JSON.stringify({ error: "Invalid JSON body" }));
+				const status = err?.message === "Request body too large" ? 413 : 400;
+				sendJson(res, status, {
+					error: status === 413 ? "Request body too large" : "Invalid JSON body",
+				});
 			});
 		return;
 	}
