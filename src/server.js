@@ -37,6 +37,7 @@ const LOONG_CMD_PREFIX =
 const LOONG_PASSWORD = process.env.LOONG_PASSWORD || process.env.JARVIS_PASSWORD || "";
 const PASSWORD_REQUIRED = Boolean(LOONG_PASSWORD);
 const WS_HEARTBEAT_MS = Number(process.env.LOONG_WS_HEARTBEAT_MS || 30000);
+const TASK_TIMEOUT_MS = Number(process.env.LOONG_TASK_TIMEOUT_MS || 10 * 60 * 1000);
 
 const IMESSAGE_ENABLED = ["1", "true", "yes"].includes(
 	String(process.env.IMESSAGE_ENABLED || "").toLowerCase(),
@@ -897,18 +898,86 @@ const resolveAgentFromText = (text, currentAgentId) => {
 	};
 };
 
+const clearTaskTimeout = (task) => {
+	if (task?.timeoutTimer) {
+		clearTimeout(task.timeoutTimer);
+		task.timeoutTimer = null;
+	}
+};
+
+const notifyTaskMessage = async (agent, task, text) => {
+	if (!task || !text) return;
+	const message = formatAgentReply(agent, text);
+	if (task.source === "imessage") {
+		await safeNotify(
+			(replyText) =>
+				notifyIMessage({ text: replyText, chatId: task.chatId, sender: task.sender }),
+			message,
+		);
+		return;
+	}
+	if (task.source === "web" && task.ws) {
+		sendGatewayMessage(task.ws, message);
+	}
+};
+
+const failCurrentTask = async (agent, task, text, { skipQueue = false } = {}) => {
+	if (!task) return;
+	task.aborted = true;
+	clearTaskTimeout(task);
+	await notifyTaskMessage(agent, task, text);
+	agent.busy = false;
+	agent.currentTask = null;
+	if (!skipQueue) {
+		processNextAgent(agent);
+	}
+	broadcastAgentStatus(agent);
+};
+
+const rejectPendingRequests = (agent, reason) => {
+	for (const pending of agent.pending.values()) {
+		if (pending.timer) clearTimeout(pending.timer);
+		pending.reject(new Error(reason));
+	}
+	agent.pending.clear();
+};
+
+const handleAgentExit = async (agent, reason) => {
+	agent.offline = true;
+	rejectPendingRequests(agent, reason);
+	agent.queue = [];
+	if (agent.currentTask) {
+		await failCurrentTask(agent, agent.currentTask, "代理已退出，任务已取消。", { skipQueue: true });
+		return;
+	}
+	agent.busy = false;
+	agent.currentTask = null;
+	broadcastAgentStatus(agent);
+};
+
 const enqueueAgentPrompt = (agent, task) => {
+	if (agent.offline) {
+		void notifyTaskMessage(agent, task, "代理当前不可用，请稍后再试。");
+		return;
+	}
 	agent.queue.push(task);
 	processNextAgent(agent);
 	broadcastAgentStatus(agent);
 };
 
 const processNextAgent = async (agent) => {
+	if (agent.offline) return;
 	if (agent.busy || agent.queue.length === 0) return;
 	agent.busy = true;
 	agent.currentTask = agent.queue.shift();
 
 	const task = agent.currentTask;
+	if (TASK_TIMEOUT_MS > 0) {
+		task.timeoutTimer = setTimeout(() => {
+			void failCurrentTask(agent, task, "处理超时，已取消。", { skipQueue: agent.offline });
+		}, TASK_TIMEOUT_MS);
+	}
+
 	try {
 		if (task.onStart) {
 			await task.onStart();
@@ -919,6 +988,7 @@ const processNextAgent = async (agent) => {
 		const message = buildPromptText(task);
 		sendToPi(agent, { type: "prompt", message });
 	} catch (err) {
+		clearTaskTimeout(task);
 		console.error(`[loong] agent ${agent.id} session error: ${err.message}`);
 		agent.busy = false;
 		agent.currentTask = null;
@@ -1055,6 +1125,14 @@ const handleAgentEvent = (agent, payload) => {
 
 	if (payload.type === "agent_end") {
 		const task = agent.currentTask;
+		clearTaskTimeout(task);
+		if (task?.aborted) {
+			agent.busy = false;
+			agent.currentTask = null;
+			processNextAgent(agent);
+			broadcastAgentStatus(agent);
+			return;
+		}
 		const reply = extractAssistantText(payload.messages || []);
 
 		// 处理 API 请求的回调
@@ -1194,6 +1272,9 @@ const sendToPi = (agent, payload) => {
 };
 
 const sendAgentRequest = (agent, command, { timeoutMs = 10000 } = {}) => {
+	if (agent.offline) {
+		return Promise.reject(new Error(`agent ${agent.id} offline`));
+	}
 	const id = `${agent.id}-${++agent.requestId}`;
 	const payload = { ...command, id };
 	return new Promise((resolve, reject) => {
@@ -1461,10 +1542,6 @@ function createAgentRuntime(config) {
 		env: process.env,
 	});
 
-	pi.on("exit", (code, signal) => {
-		console.error(`[loong] agent ${config.id} exited (code=${code}, signal=${signal})`);
-	});
-
 	const runtime = {
 		id: config.id,
 		name: config.name,
@@ -1483,8 +1560,15 @@ function createAgentRuntime(config) {
 		queue: [],
 		busy: false,
 		currentTask: null,
+		offline: false,
 		imessageSessions: new Map(),
 	};
+
+	pi.on("exit", (code, signal) => {
+		const reason = `agent ${config.id} exited (code=${code}, signal=${signal})`;
+		console.error(`[loong] ${reason}`);
+		void handleAgentExit(runtime, reason);
+	});
 
 	const rl = createInterface({ input: pi.stdout });
 	rl.on("line", (line) => handleAgentLine(runtime, line));
