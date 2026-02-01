@@ -1465,7 +1465,7 @@ function normalizeAgentConfig(config, configPath, gatewayConfig) {
 	const keywords = Array.isArray(config.keywords) && config.keywords.length > 0
 		? config.keywords
 		: [id];
-	const sessionDir = config.sessionDir && config.sessionDir !== "sessions"
+	const sessionDir = config.sessionDir
 		? resolve(configDir, config.sessionDir)
 		: resolve(LOONG_SPACE, id);
 	const memoryDir = resolve(configDir, config.memory?.dir || "memory");
