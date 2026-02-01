@@ -102,7 +102,6 @@ rl.on("line", (line) => {
 					message: "notify ok",
 					notifyType: "info",
 				});
-				send({ type: "agent_end", messages: [] });
 				break;
 			}
 			emitAssistantReply(msg);

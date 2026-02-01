@@ -39,6 +39,7 @@ const LOONG_DEBUG = ["1", "true", "yes"].includes(
 );
 const WS_HEARTBEAT_MS = Number(process.env.LOONG_WS_HEARTBEAT_MS || 30000);
 const TASK_TIMEOUT_MS = Number(process.env.LOONG_TASK_TIMEOUT_MS || 10 * 60 * 1000);
+const SLASH_COMMAND_TIMEOUT_MS = Number(process.env.LOONG_SLASH_COMMAND_TIMEOUT_MS || 2000);
 const SESSION_CACHE_TTL_MS = Number(process.env.LOONG_SESSION_CACHE_TTL_MS || 3000);
 const AGENT_RESTART_MS = Number(process.env.LOONG_AGENT_RESTART_MS || 3000);
 const MAX_BODY_BYTES = (() => {
@@ -795,6 +796,12 @@ const matchVoiceCommand = (text) => {
 
 const resolveCommand = (text) => matchVoiceCommand(text);
 
+const isSlashCommandText = (text) => {
+	const trimmed = text.trim();
+	if (!trimmed.startsWith("/")) return false;
+	return trimmed.length > 1 && !trimmed.startsWith("//");
+};
+
 const isAuthorized = (sender) => {
 	if (IMESSAGE_ALLOWLIST.length === 0) return true;
 	if (!sender) return false;
@@ -955,6 +962,13 @@ const clearTaskTimeout = (task) => {
 	}
 };
 
+const clearSlashCommandTimer = (task) => {
+	if (task?.slashCommandTimer) {
+		clearTimeout(task.slashCommandTimer);
+		task.slashCommandTimer = null;
+	}
+};
+
 const notifyTaskMessage = async (agent, task, text) => {
 	if (!task || !text) return;
 	const message = formatAgentReply(agent, text);
@@ -971,10 +985,23 @@ const notifyTaskMessage = async (agent, task, text) => {
 	}
 };
 
+const completeCurrentTask = (agent, task, { skipQueue = false } = {}) => {
+	if (!task) return;
+	clearTaskTimeout(task);
+	clearSlashCommandTimer(task);
+	agent.busy = false;
+	agent.currentTask = null;
+	if (!skipQueue) {
+		processNextAgent(agent);
+	}
+	broadcastAgentStatus(agent);
+};
+
 const failCurrentTask = async (agent, task, text, { skipQueue = false } = {}) => {
 	if (!task) return;
 	task.aborted = true;
 	clearTaskTimeout(task);
+	clearSlashCommandTimer(task);
 	await notifyTaskMessage(agent, task, text);
 	agent.busy = false;
 	agent.currentTask = null;
@@ -1023,6 +1050,9 @@ const enqueueAgentPrompt = (agent, task) => {
 		void notifyTaskMessage(agent, task, "代理当前不可用，请稍后再试。");
 		return;
 	}
+	if (typeof task.text === "string") {
+		task.isSlashCommand = isSlashCommandText(task.text);
+	}
 	agent.queue.push(task);
 	processNextAgent(agent);
 	broadcastAgentStatus(agent);
@@ -1039,6 +1069,13 @@ const processNextAgent = async (agent) => {
 		task.timeoutTimer = setTimeout(() => {
 			void failCurrentTask(agent, task, "处理超时，已取消。", { skipQueue: agent.offline });
 		}, TASK_TIMEOUT_MS);
+	}
+	if (task.isSlashCommand && SLASH_COMMAND_TIMEOUT_MS > 0) {
+		task.slashCommandTimer = setTimeout(() => {
+			if (!task.agentStarted) {
+				completeCurrentTask(agent, task, { skipQueue: agent.offline });
+			}
+		}, SLASH_COMMAND_TIMEOUT_MS);
 	}
 
 	try {
@@ -1064,6 +1101,7 @@ const processNextAgent = async (agent) => {
 const buildPromptText = (task) => {
 	const text = task.text || "";
 	if (task.source === "imessage") {
+		if (task.isSlashCommand) return text;
 		const sender = task.sender || "unknown";
 		const prefix = `iMessage from ${sender}:\n`;
 		return `${prefix}${text}`;
@@ -1191,14 +1229,21 @@ const handleAgentEvent = (agent, payload) => {
 		return;
 	}
 
+	if (payload.type === "agent_start") {
+		const task = agent.currentTask;
+		if (task) {
+			task.agentStarted = true;
+			clearSlashCommandTimer(task);
+		}
+		return;
+	}
+
 	if (payload.type === "agent_end") {
 		const task = agent.currentTask;
 		clearTaskTimeout(task);
+		clearSlashCommandTimer(task);
 		if (task?.aborted) {
-			agent.busy = false;
-			agent.currentTask = null;
-			processNextAgent(agent);
-			broadcastAgentStatus(agent);
+			completeCurrentTask(agent, task, { skipQueue: agent.offline });
 			return;
 		}
 		const reply = extractAssistantText(payload.messages || []);
@@ -1216,17 +1261,11 @@ const handleAgentEvent = (agent, payload) => {
 					const message = err instanceof Error ? err.message : String(err);
 					console.error(`[loong] imessage send failed: ${message}`);
 				} finally {
-					agent.busy = false;
-					agent.currentTask = null;
-					processNextAgent(agent);
-					broadcastAgentStatus(agent);
+					completeCurrentTask(agent, task, { skipQueue: agent.offline });
 				}
 			})();
 		} else {
-			agent.busy = false;
-			agent.currentTask = null;
-			processNextAgent(agent);
-			broadcastAgentStatus(agent);
+			completeCurrentTask(agent, task, { skipQueue: agent.offline });
 		}
 
 		if (reply.trim()) {
@@ -1258,11 +1297,17 @@ const handleExtensionUiRequest = async (agent, payload) => {
 			(text) => notifyIMessage({ text, chatId: task.chatId, sender: task.sender }),
 			formatted,
 		);
+		if (task.isSlashCommand && !task.agentStarted) {
+			completeCurrentTask(agent, task, { skipQueue: agent.offline });
+		}
 		return;
 	}
 
 	if (task?.source === "web" && task.ws) {
 		sendGatewayMessage(task.ws, formatted);
+		if (task.isSlashCommand && !task.agentStarted) {
+			completeCurrentTask(agent, task, { skipQueue: agent.offline });
+		}
 		return;
 	}
 
