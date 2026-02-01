@@ -36,6 +36,9 @@ const LOONG_CMD_PREFIX =
 	process.env.LOONG_CMD_PREFIX || process.env.JARVIS_CMD_PREFIX || "!";
 const LOONG_PASSWORD = process.env.LOONG_PASSWORD || process.env.JARVIS_PASSWORD || "";
 const PASSWORD_REQUIRED = Boolean(LOONG_PASSWORD);
+const LOONG_DEBUG = ["1", "true", "yes"].includes(
+	String(process.env.LOONG_DEBUG || "").toLowerCase(),
+);
 const WS_HEARTBEAT_MS = Number(process.env.LOONG_WS_HEARTBEAT_MS || 30000);
 const TASK_TIMEOUT_MS = Number(process.env.LOONG_TASK_TIMEOUT_MS || 10 * 60 * 1000);
 const SESSION_CACHE_TTL_MS = Number(process.env.LOONG_SESSION_CACHE_TTL_MS || 3000);
@@ -1281,7 +1284,14 @@ const sendGatewayMessage = (ws, text) => {
 };
 
 const sendToPi = (agent, payload) => {
-	agent.pi.stdin.write(`${JSON.stringify(payload)}\n`);
+	if (agent.offline) return;
+	try {
+		agent.pi.stdin.write(`${JSON.stringify(payload)}\n`);
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		console.error(`[loong] send to agent ${agent.id} failed: ${message}`);
+		void handleAgentExit(agent, `send error: ${message}`);
+	}
 };
 
 const sendAgentRequest = (agent, command, { timeoutMs = 10000 } = {}) => {
@@ -1312,8 +1322,11 @@ const handleAgentLine = (agent, line) => {
 		if (!handled) {
 			handleAgentEvent(agent, payload);
 		}
-	} catch {
-		// ignore parse errors
+	} catch (err) {
+		if (LOONG_DEBUG) {
+			const message = err instanceof Error ? err.message : String(err);
+			console.warn(`[loong] failed to parse agent ${agent.id} output: ${message}`);
+		}
 	}
 
 	for (const client of clients) {
