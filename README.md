@@ -141,23 +141,9 @@ Notes:
   - `Jarvis 帮我写个脚本` → route to Jarvis agent
   - `Gump 给我讲个故事` → route to Gump agent
 - Voice-friendly commands (no prefix required):
-  - `新建会话` / `新建对话` → new session
-  - `列出会话` / `有哪些会话` → list sessions
-  - `切换到 <id>` → switch session
-  - `压缩上下文` → compact
+  - `new [provider/model] [message]` → start a fresh session (optional model)
 - Advanced commands (prefixed, handled by gateway):
-  - `!session` → list sessions
-  - `!session <id-prefix>` → switch session (prefix must be unique)
   - `!new <provider/model> [message]` → start a fresh session (optional model)
-  - `!compact [instruction]` → compact the session context
-  - `!memory <text>` → append to daily memory
-  - `!memory pin <text>` → append to MEMORY.md
-  - `!memory show <YYYY-MM-DD|index>` → show a memory file
-  - `!exec <command>` → run a background command on the gateway host
-  - `!exec status [id]` → check a running job
-  - `!exec stop <id>` → stop a running job
-  - `!edit <path>` → show a file for editing (Web UI only)
-  - `!save <path>\n<content>` → overwrite a file (Web UI only)
 - Customize command prefix via `LOONG_CMD_PREFIX` env var (default: `!`)
 - Avoid using the Web UI concurrently if you need strict routing.
 
