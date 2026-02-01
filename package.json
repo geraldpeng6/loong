@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "test:integration": "node scripts/integration-test.js"
   },
   "dependencies": {
     "ws": "^8.18.0"
