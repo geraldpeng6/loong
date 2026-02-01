@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>loong</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="toolbar">
+      <div class="left">
+        <strong>loong</strong>
+        <span id="status" class="status">connecting...</span>
+      </div>
+    </header>
+    <div class="hint">Commands: new</div>
+
+    <div class="layout">
+      <aside class="sidebar">
+        <div class="sidebar-header">
+          <span>Sessions</span>
+          <button id="refreshSessions" class="icon-btn" title="Refresh">↻</button>
+        </div>
+        <div id="sessionDir" class="session-dir"></div>
+        <div id="sessionList" class="session-list"></div>
+      </aside>
+
+      <main>
+        <div id="messages" class="messages"></div>
+      </main>
+    </div>
+
+    <footer class="composer">
+      <div class="model-picker">
+        <div class="picker">
+          <label for="providerInput">Provider</label>
+          <input id="providerInput" type="text" placeholder="provider" autocomplete="off" />
+          <div id="providerList" class="picker-list"></div>
+        </div>
+        <div class="picker">
+          <label for="modelInput">Model</label>
+          <input id="modelInput" type="text" placeholder="model" autocomplete="off" />
+          <div id="modelList" class="picker-list"></div>
+        </div>
+      </div>
+      <div class="composer-row">
+        <textarea id="input" rows="3" placeholder="Type a message... (Enter to send, Shift+Enter for newline)"></textarea>
+        <button id="sendBtn" class="send">Send</button>
+      </div>
+    </footer>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
