@@ -49,11 +49,22 @@ const NOTIFY_LOCAL_ONLY = !["0", "false", "no"].includes(
 	String(process.env.LOONG_NOTIFY_LOCAL_ONLY || "true").toLowerCase(),
 );
 
-const IMESSAGE_ENABLED = ["1", "true", "yes"].includes(
+const IMESSAGE_ENABLED_ENV = ["1", "true", "yes"].includes(
 	String(process.env.IMESSAGE_ENABLED || "").toLowerCase(),
 );
+const IMESSAGE_DISABLED_ENV = ["0", "false", "no"].includes(
+	String(process.env.IMESSAGE_ENABLED || "").toLowerCase(),
+);
+const IMESSAGE_AUTO = !["0", "false", "no"].includes(
+	String(process.env.LOONG_IMESSAGE_AUTO || "true").toLowerCase(),
+);
 const IMESSAGE_CLI_PATH = process.env.IMESSAGE_CLI_PATH || "imsg";
-const IMESSAGE_DB_PATH = process.env.IMESSAGE_DB_PATH;
+const DEFAULT_IMESSAGE_DB_PATH = join(homedir(), "Library", "Messages", "chat.db");
+const IMESSAGE_DB_PATH = process.env.IMESSAGE_DB_PATH || DEFAULT_IMESSAGE_DB_PATH;
+const IMESSAGE_DB_FOUND = existsSync(IMESSAGE_DB_PATH);
+const IMESSAGE_ENABLED = IMESSAGE_DISABLED_ENV
+	? false
+	: IMESSAGE_ENABLED_ENV || (IMESSAGE_AUTO && IMESSAGE_DB_FOUND);
 const IMESSAGE_SERVICE = process.env.IMESSAGE_SERVICE || "auto";
 const IMESSAGE_REGION = process.env.IMESSAGE_REGION || "US";
 const IMESSAGE_ATTACHMENTS = ["1", "true", "yes"].includes(
@@ -1434,9 +1445,17 @@ server.listen(PORT, () => {
 	console.log(`[loong] loong home: ${LOONG_HOME}`);
 	console.log(`[loong] agents: ${agentList.map((a) => a.id).join(", ")}`);
 	if (IMESSAGE_ENABLED) {
-		console.log(`[loong] imessage enabled (cli=${IMESSAGE_CLI_PATH})`);
+		const modeLabel = IMESSAGE_ENABLED_ENV ? "explicit" : "auto";
+		console.log(
+			`[loong] imessage enabled (${modeLabel}, cli=${IMESSAGE_CLI_PATH}, db=${IMESSAGE_DB_PATH})`,
+		);
 	} else {
-		console.log("[loong] imessage disabled (set IMESSAGE_ENABLED=1 to enable)");
+		const reason = IMESSAGE_DISABLED_ENV
+			? "disabled via IMESSAGE_ENABLED=0"
+			: IMESSAGE_AUTO && !IMESSAGE_DB_FOUND
+				? `chat.db not found at ${IMESSAGE_DB_PATH}`
+				: "set IMESSAGE_ENABLED=1 or LOONG_IMESSAGE_AUTO=1 to enable";
+		console.log(`[loong] imessage disabled (${reason})`);
 	}
 });
 

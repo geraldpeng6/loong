@@ -118,6 +118,7 @@ export IMESSAGE_CLI_PATH=/usr/local/bin/imsg   # or /opt/homebrew/bin/imsg
 export IMESSAGE_DB_PATH=/Users/<you>/Library/Messages/chat.db
 
 # optional
+export LOONG_IMESSAGE_AUTO=1   # auto-enable if chat.db exists (default: 1)
 export IMESSAGE_SERVICE=auto   # imessage | sms | auto
 export IMESSAGE_REGION=US
 export IMESSAGE_ATTACHMENTS=1  # include attachments
@@ -135,6 +136,8 @@ pnpm start
 If iMessage doesn't start, ensure the terminal has permission to access `~/Library/Messages/chat.db` (Full Disk Access on macOS).
 
 Notes:
+- If `IMESSAGE_DB_PATH` is not set, defaults to `~/Library/Messages/chat.db`.
+- Auto-enable: `LOONG_IMESSAGE_AUTO=1` (default) turns iMessage on when the DB exists. Disable with `IMESSAGE_ENABLED=0` or `LOONG_IMESSAGE_AUTO=0`.
 - Session mode: `IMESSAGE_SESSION_MODE=shared` (one shared session) or `per-chat` (map per chat).
 - Mapping file (per-chat mode only): `~/.loong/agents/<id>/imessage-session-map.json` (per agent).
 - Outbound media files are written to `IMESSAGE_OUTBOUND_DIR` (default: `~/.loong/imessage-outbound`).
