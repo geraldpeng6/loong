@@ -39,7 +39,7 @@ const LOONG_DEBUG = ["1", "true", "yes"].includes(
 );
 const WS_HEARTBEAT_MS = Number(process.env.LOONG_WS_HEARTBEAT_MS || 30000);
 const TASK_TIMEOUT_MS = Number(process.env.LOONG_TASK_TIMEOUT_MS || 10 * 60 * 1000);
-const SLASH_COMMAND_TIMEOUT_MS = Number(process.env.LOONG_SLASH_COMMAND_TIMEOUT_MS || 2000);
+const SLASH_COMMAND_TIMEOUT_MS = Number(process.env.LOONG_SLASH_COMMAND_TIMEOUT_MS || 0);
 const SESSION_CACHE_TTL_MS = Number(process.env.LOONG_SESSION_CACHE_TTL_MS || 3000);
 const AGENT_RESTART_MS = Number(process.env.LOONG_AGENT_RESTART_MS || 3000);
 const MAX_BODY_BYTES = (() => {
@@ -1376,7 +1376,7 @@ const handleIMessageIncoming = async (message) => {
 					text: promptText,
 					sender,
 					chatId,
-					onStart: () => sendProcessingNotice(agent, { chatId, sender }),
+					onStart: () => sendProcessingNotice(agent, { chatId, sender, text: promptText }),
 				}),
 			contextKey: sessionKey,
 		})
@@ -1388,15 +1388,19 @@ const handleIMessageIncoming = async (message) => {
 		text: trimmed,
 		sender,
 		chatId,
-		onStart: () => sendProcessingNotice(agent, { chatId, sender }),
+		onStart: () => sendProcessingNotice(agent, { chatId, sender, text: trimmed }),
 	});
 };
 
-const sendProcessingNotice = async (agent, { chatId, sender }) => {
+const sendProcessingNotice = async (agent, { chatId, sender, text }) => {
 	if (!agent.notifyOnStart) return;
+	const trimmed = typeof text === "string" ? text.trim() : "";
+	const hint = trimmed && isSlashCommandText(trimmed)
+		? `已收到命令 ${trimmed}`
+		: "正在处理...";
 	await safeNotify(
-		(text) => notifyIMessage({ text, chatId, sender }),
-		`${resolveAgentLabel(agent)} 正在处理...`,
+		(replyText) => notifyIMessage({ text: replyText, chatId, sender }),
+		`${resolveAgentLabel(agent)} ${hint}`,
 	);
 };
 
