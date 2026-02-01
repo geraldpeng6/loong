@@ -32,8 +32,6 @@ const LOONG_CONFIG_PATH =
 	process.env.LOONG_CONFIG_PATH ||
 	process.env.JARVIS_CONFIG_PATH ||
 	join(LOONG_HOME, "config.json");
-const LOONG_CMD_PREFIX =
-	process.env.LOONG_CMD_PREFIX || process.env.JARVIS_CMD_PREFIX || "!";
 const LOONG_PASSWORD = process.env.LOONG_PASSWORD || process.env.JARVIS_PASSWORD || "";
 const PASSWORD_REQUIRED = Boolean(LOONG_PASSWORD);
 const LOONG_DEBUG = ["1", "true", "yes"].includes(
@@ -771,26 +769,6 @@ const formatAgentReply = (agent, text) => {
 	return `${resolveAgentLabel(agent)} ${text}`.trim();
 };
 
-const parsePrefixedCommand = (text) => {
-	if (!LOONG_CMD_PREFIX) return null;
-	const trimmed = text.trim();
-	if (!trimmed.startsWith(LOONG_CMD_PREFIX)) return null;
-	const token = trimmed.split(/\s+/)[0] || "";
-	const name = token.toLowerCase().split(":")[0];
-	let remainder = trimmed.slice(token.length).trim();
-	if (remainder.startsWith(":")) remainder = remainder.slice(1).trim();
-	return { name, remainder };
-};
-
-const normalizeCommand = (prefixed) => {
-	if (!prefixed) return null;
-	const { name, remainder } = prefixed;
-	if (name === `${LOONG_CMD_PREFIX}new`) {
-		return { type: "new_session", remainder };
-	}
-	return null;
-};
-
 const matchVoiceCommand = (text) => {
 	const trimmed = text.trim();
 	if (!trimmed) return null;
@@ -804,11 +782,7 @@ const matchVoiceCommand = (text) => {
 	return { type: "new_session", remainder };
 };
 
-const resolveCommand = (text) => {
-	const prefixed = normalizeCommand(parsePrefixedCommand(text));
-	if (prefixed) return prefixed;
-	return matchVoiceCommand(text);
-};
+const resolveCommand = (text) => matchVoiceCommand(text);
 
 const isAuthorized = (sender) => {
 	if (IMESSAGE_ALLOWLIST.length === 0) return true;

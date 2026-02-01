@@ -144,9 +144,6 @@ Notes:
   - `Gump 给我讲个故事` → route to Gump agent
 - Voice-friendly commands (no prefix required):
   - `new [provider/model] [message]` → start a fresh session (optional model)
-- Advanced commands (prefixed, handled by gateway):
-  - `!new <provider/model> [message]` → start a fresh session (optional model)
-- Customize command prefix via `LOONG_CMD_PREFIX` env var (default: `!`)
 - Avoid using the Web UI concurrently if you need strict routing.
 
 ## Endpoints
