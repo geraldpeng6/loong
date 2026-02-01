@@ -36,6 +36,7 @@ const LOONG_CMD_PREFIX =
 	process.env.LOONG_CMD_PREFIX || process.env.JARVIS_CMD_PREFIX || "!";
 const LOONG_PASSWORD = process.env.LOONG_PASSWORD || process.env.JARVIS_PASSWORD || "";
 const PASSWORD_REQUIRED = Boolean(LOONG_PASSWORD);
+const WS_HEARTBEAT_MS = Number(process.env.LOONG_WS_HEARTBEAT_MS || 30000);
 
 const IMESSAGE_ENABLED = ["1", "true", "yes"].includes(
 	String(process.env.IMESSAGE_ENABLED || "").toLowerCase(),
@@ -159,6 +160,21 @@ const sendUnauthorized = (res) => {
 	res.end("Unauthorized");
 };
 
+const readBody = (req) => {
+	return new Promise((resolve, reject) => {
+		let body = "";
+		req.on("data", (chunk) => { body += chunk; });
+		req.on("end", () => {
+			try {
+				resolve(body ? JSON.parse(body) : {});
+			} catch (e) {
+				reject(e);
+			}
+		});
+		req.on("error", reject);
+	});
+};
+
 const server = createServer((req, res) => {
 	const url = parseRequestUrl(req);
 	if (!url) {
@@ -181,6 +197,106 @@ const server = createServer((req, res) => {
 				defaultAgent: defaultAgentId,
 			}),
 		);
+		return;
+	}
+
+	// POST /api/notify - 直接推送文字给所有 WebSocket 客户端
+	if (url.pathname === "/api/notify" && req.method === "POST") {
+		readBody(req)
+			.then((body) => {
+				const { text, agentId = defaultAgentId } = body;
+				if (!text || typeof text !== "string") {
+					res.writeHead(400, { "content-type": "application/json" });
+					res.end(JSON.stringify({ error: "Missing or invalid 'text' field" }));
+					return;
+				}
+
+				const agent = agents.get(agentId) || agents.get(defaultAgentId);
+				if (!agent) {
+					res.writeHead(404, { "content-type": "application/json" });
+					res.end(JSON.stringify({ error: "Agent not found" }));
+					return;
+				}
+
+				const formattedText = formatAgentReply(agent, text);
+				const msg = JSON.stringify({ type: "gateway_message", text: formattedText });
+				let sentCount = 0;
+
+				for (const client of clients) {
+					if (client.readyState === WebSocket.OPEN) {
+						client.send(msg);
+						sentCount++;
+					}
+				}
+
+				console.log(`[loong] /api/notify sent to ${sentCount} clients: ${text.substring(0, 50)}...`);
+				res.writeHead(200, { "content-type": "application/json" });
+				res.end(JSON.stringify({ success: true, sentCount }));
+			})
+			.catch((err) => {
+				res.writeHead(400, { "content-type": "application/json" });
+				res.end(JSON.stringify({ error: "Invalid JSON body" }));
+			});
+		return;
+	}
+
+	// POST /api/ask - 发送给 LLM 处理，然后推送回复给客户端
+	if (url.pathname === "/api/ask" && req.method === "POST") {
+		readBody(req)
+			.then(async (body) => {
+				const { message, agentId = defaultAgentId, timeoutMs = 60000 } = body;
+				if (!message || typeof message !== "string") {
+					res.writeHead(400, { "content-type": "application/json" });
+					res.end(JSON.stringify({ error: "Missing or invalid 'message' field" }));
+					return;
+				}
+
+				const agent = agents.get(agentId) || agents.get(defaultAgentId);
+				if (!agent) {
+					res.writeHead(404, { "content-type": "application/json" });
+					res.end(JSON.stringify({ error: "Agent not found" }));
+					return;
+				}
+
+				// 检查 agent 是否忙碌
+				if (agent.busy) {
+					res.writeHead(503, { "content-type": "application/json" });
+					res.end(JSON.stringify({ error: "Agent is busy, try again later", busy: true }));
+					return;
+				}
+
+				console.log(`[loong] /api/ask processing: ${message.substring(0, 50)}...`);
+
+				// 创建 Promise 等待回复
+				const replyPromise = new Promise((resolve, reject) => {
+					const timeout = setTimeout(() => {
+						reject(new Error("Timeout waiting for agent response"));
+					}, timeoutMs);
+
+					enqueueAgentPrompt(agent, {
+						source: "api",
+						text: message,
+						onReply: (reply) => {
+							clearTimeout(timeout);
+							resolve(reply);
+						},
+					});
+				});
+
+				try {
+					const reply = await replyPromise;
+					console.log(`[loong] /api/ask reply: ${reply.substring(0, 50)}...`);
+					res.writeHead(200, { "content-type": "application/json" });
+					res.end(JSON.stringify({ success: true, reply }));
+				} catch (err) {
+					res.writeHead(504, { "content-type": "application/json" });
+					res.end(JSON.stringify({ error: err.message }));
+				}
+			})
+			.catch((err) => {
+				res.writeHead(400, { "content-type": "application/json" });
+				res.end(JSON.stringify({ error: "Invalid JSON body" }));
+			});
 		return;
 	}
 
@@ -223,6 +339,10 @@ wss.on("connection", (ws, req) => {
 		ws.close(1008, "Unauthorized");
 		return;
 	}
+	ws.isAlive = true;
+	ws.on("pong", () => {
+		ws.isAlive = true;
+	});
 	clients.add(ws);
 	webContexts.set(ws, { agentId: defaultAgentId });
 	ws.send(
@@ -341,6 +461,25 @@ wss.on("connection", (ws, req) => {
 		clients.delete(ws);
 		webContexts.delete(ws);
 	});
+});
+
+const heartbeatInterval = WS_HEARTBEAT_MS > 0
+	? setInterval(() => {
+		for (const client of wss.clients) {
+			if (client.isAlive === false) {
+				client.terminate();
+				continue;
+			}
+			client.isAlive = false;
+			client.ping();
+		}
+	}, WS_HEARTBEAT_MS)
+	: null;
+
+wss.on("close", () => {
+	if (heartbeatInterval) {
+		clearInterval(heartbeatInterval);
+	}
 });
 
 const extractTextBlocks = (content) => {
@@ -917,6 +1056,12 @@ const handleAgentEvent = (agent, payload) => {
 	if (payload.type === "agent_end") {
 		const task = agent.currentTask;
 		const reply = extractAssistantText(payload.messages || []);
+
+		// 处理 API 请求的回调
+		if (task?.source === "api" && task.onReply) {
+			task.onReply(reply);
+		}
+
 		if (task?.source === "imessage") {
 			(async () => {
 				try {
@@ -1141,6 +1286,8 @@ if (IMESSAGE_ENABLED) {
 server.listen(PORT, () => {
 	console.log(`[loong] listening on http://localhost:${PORT}`);
 	console.log(`[loong] websocket ws://localhost:${PORT}/ws`);
+	console.log(`[loong] api notify: POST http://localhost:${PORT}/api/notify`);
+	console.log(`[loong] api ask: POST http://localhost:${PORT}/api/ask`);
 	console.log(`[loong] loong home: ${LOONG_HOME}`);
 	console.log(`[loong] agents: ${agentList.map((a) => a.id).join(", ")}`);
 	if (IMESSAGE_ENABLED) {

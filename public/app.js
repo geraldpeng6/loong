@@ -28,7 +28,10 @@ let currentAgentQueue = 0;
 let knownAgents = [];
 
 const connect = () => {
-  ws = new WebSocket(`ws://${location.host}/ws`);
+  const wsUrl = new URL("/ws", window.location.href);
+  wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:";
+  wsUrl.search = window.location.search;
+  ws = new WebSocket(wsUrl);
 
   ws.addEventListener("open", () => {
     statusEl.textContent = "connected";
