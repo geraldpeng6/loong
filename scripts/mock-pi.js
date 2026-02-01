@@ -92,9 +92,22 @@ rl.on("line", (line) => {
 			}
 			respond(req, {});
 			break;
-		case "prompt":
-			emitAssistantReply(String(req.message ?? ""));
+		case "prompt": {
+			const msg = String(req.message ?? "");
+			if (msg.startsWith("/notify")) {
+				send({
+					type: "extension_ui_request",
+					id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+					method: "notify",
+					message: "notify ok",
+					notifyType: "info",
+				});
+				send({ type: "agent_end", messages: [] });
+				break;
+			}
+			emitAssistantReply(msg);
 			break;
+		}
 		default:
 			respond(req, { error: "unknown command" }, false);
 	}

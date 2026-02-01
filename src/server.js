@@ -1186,6 +1186,11 @@ const handleAgentResponse = (agent, payload) => {
 const handleAgentEvent = (agent, payload) => {
 	if (!payload || typeof payload !== "object") return;
 
+	if (payload.type === "extension_ui_request") {
+		void handleExtensionUiRequest(agent, payload);
+		return;
+	}
+
 	if (payload.type === "agent_end") {
 		const task = agent.currentTask;
 		clearTaskTimeout(task);
@@ -1237,6 +1242,35 @@ const notifyBackgroundWebClients = (agent, reply) => {
 		const context = webContexts.get(client);
 		if (context?.agentId === agent.id) continue;
 		client.send(JSON.stringify({ type: "gateway_message", text }));
+	}
+};
+
+const handleExtensionUiRequest = async (agent, payload) => {
+	if (!payload || payload.method !== "notify") return;
+	const message = typeof payload.message === "string" ? payload.message.trim() : "";
+	if (!message) return;
+
+	const formatted = formatAgentReply(agent, message);
+	const task = agent.currentTask;
+
+	if (task?.source === "imessage") {
+		await safeNotify(
+			(text) => notifyIMessage({ text, chatId: task.chatId, sender: task.sender }),
+			formatted,
+		);
+		return;
+	}
+
+	if (task?.source === "web" && task.ws) {
+		sendGatewayMessage(task.ws, formatted);
+		return;
+	}
+
+	for (const client of clients) {
+		if (client.readyState !== WebSocket.OPEN) continue;
+		const context = webContexts.get(client);
+		if (context?.agentId !== agent.id) continue;
+		client.send(JSON.stringify({ type: "gateway_message", text: formatted }));
 	}
 };
 

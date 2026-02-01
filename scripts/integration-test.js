@@ -195,6 +195,13 @@ try {
 	const notifyMsg = await notifyWaiter;
 	assert.ok(notifyMsg.text);
 
+	wsAuth.send(JSON.stringify({ type: "prompt", message: "/notify" }));
+	const extensionNotify = await waitForWsMessage(
+		wsAuth,
+		(msg) => msg.type === "gateway_message" && msg.text.includes("notify ok"),
+	);
+	assert.ok(extensionNotify.text);
+
 	wsAuth.send(JSON.stringify({ type: "prompt", message: "hello" }));
 	const agentEnd = await waitForWsMessage(wsAuth, (msg) => msg.type === "agent_end");
 	assert.ok(Array.isArray(agentEnd.messages));
