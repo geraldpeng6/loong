@@ -5,6 +5,7 @@ const sendBtn = document.getElementById("sendBtn");
 const sessionListEl = document.getElementById("sessionList");
 const refreshSessionsBtn = document.getElementById("refreshSessions");
 const sessionDirEl = document.getElementById("sessionDir");
+const agentSelectEl = document.getElementById("agentSelect");
 const providerInput = document.getElementById("providerInput");
 const providerListEl = document.getElementById("providerList");
 const modelInput = document.getElementById("modelInput");
@@ -26,6 +27,27 @@ let currentAgentName = null;
 let currentAgentBusy = false;
 let currentAgentQueue = 0;
 let knownAgents = [];
+
+const renderAgentOptions = () => {
+  if (!agentSelectEl) return;
+  agentSelectEl.innerHTML = "";
+  if (!knownAgents || knownAgents.length === 0) {
+    agentSelectEl.disabled = true;
+    return;
+  }
+
+  knownAgents.forEach((agent) => {
+    const option = document.createElement("option");
+    option.value = agent.id;
+    option.textContent = agent.name ? `${agent.name} (${agent.id})` : agent.id;
+    agentSelectEl.appendChild(option);
+  });
+
+  agentSelectEl.disabled = false;
+  if (currentAgentId) {
+    agentSelectEl.value = currentAgentId;
+  }
+};
 
 const connect = () => {
   const wsUrl = new URL("/ws", window.location.href);
@@ -70,6 +92,7 @@ const connect = () => {
       if (homePath) {
         sessionDirEl.textContent = homePath;
       }
+      renderAgentOptions();
       updateStatus({});
       return;
     }
@@ -140,6 +163,12 @@ const handleResponse = (payload) => {
     return;
   }
 
+  if (payload.command === "list_agents" && payload.success) {
+    knownAgents = payload.data?.agents || [];
+    renderAgentOptions();
+    return;
+  }
+
   if (payload.command === "fork" && payload.success) {
     if (payload.data?.cancelled) {
       appendMessage("system", "分支创建被取消");
@@ -179,6 +208,7 @@ const handleEvent = (payload) => {
     latestMessages = null;
     latestForkMessages = null;
     appendMessage("system", `已切换到 ${currentAgentName || currentAgentId}`.trim());
+    renderAgentOptions();
     send({ type: "get_state" });
     send({ type: "get_messages" });
     send({ type: "get_available_models" });
@@ -617,6 +647,14 @@ const attemptSetModel = () => {
   if (!match) return;
   send({ type: "set_model", provider: match.provider, modelId: match.id });
 };
+
+if (agentSelectEl) {
+  agentSelectEl.addEventListener("change", () => {
+    const targetId = agentSelectEl.value;
+    if (!targetId || targetId === currentAgentId) return;
+    send({ type: "switch_agent", agentId: targetId });
+  });
+}
 
 refreshSessionsBtn.addEventListener("click", () => {
   send({ type: "list_sessions" });

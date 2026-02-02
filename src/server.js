@@ -447,6 +447,23 @@ wss.on("connection", (ws, req) => {
 			return;
 		}
 
+		if (payload.type === "switch_agent") {
+			const targetId = typeof payload.agentId === "string" ? payload.agentId : "";
+			const agent = agents.get(targetId);
+			if (!agent) {
+				ws.send(JSON.stringify({ type: "error", error: "Agent not found" }));
+				return;
+			}
+			webContexts.set(ws, { agentId: agent.id });
+			ws.send(
+				JSON.stringify({
+					type: "gateway_agent_switched",
+					agent: { id: agent.id, name: agent.name, keywords: agent.keywords },
+				}),
+			);
+			return;
+		}
+
 		const context = webContexts.get(ws) || { agentId: defaultAgentId };
 		const currentAgent = agents.get(context.agentId) || agents.get(defaultAgentId);
 		if (!currentAgent) {
