@@ -39,7 +39,7 @@ const renderAgentOptions = () => {
   knownAgents.forEach((agent) => {
     const option = document.createElement("option");
     option.value = agent.id;
-    option.textContent = agent.name ? `${agent.name} (${agent.id})` : agent.id;
+    option.textContent = agent.name || agent.id;
     agentSelectEl.appendChild(option);
   });
 

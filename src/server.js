@@ -88,6 +88,97 @@ const DEFAULT_GATEWAY_CONFIG = {
 	keywordMode: "prefix",
 };
 
+const parseNamePair = (raw) => {
+	if (!raw || typeof raw !== "string") return { zh: null, en: null };
+	const trimmed = raw.trim();
+	if (!trimmed) return { zh: null, en: null };
+	const match = trimmed.match(/^([^()（）]+)[(（]([^()（）]+)[)）]$/);
+	if (match) {
+		return { zh: match[1].trim() || null, en: match[2].trim() || null };
+	}
+	const isAscii = /^[\x00-\x7F]+$/.test(trimmed);
+	return isAscii ? { zh: null, en: trimmed } : { zh: trimmed, en: null };
+};
+
+const resolveAgentNames = (config, id) => {
+	let nameZh = null;
+	let nameEn = null;
+
+	if (config && typeof config.name === "object" && config.name !== null) {
+		const nameObj = config.name;
+		if (typeof nameObj.zh === "string") nameZh = nameObj.zh.trim() || null;
+		if (typeof nameObj.en === "string") nameEn = nameObj.en.trim() || null;
+	}
+
+	if (typeof config?.name === "string") {
+		const parsed = parseNamePair(config.name);
+		nameZh = nameZh || parsed.zh;
+		nameEn = nameEn || parsed.en;
+	}
+
+	if (!nameZh && !nameEn) {
+		const fallback = parseNamePair(id);
+		nameZh = fallback.zh;
+		nameEn = fallback.en || id;
+	}
+
+	const displayName = nameZh && nameEn
+		? `${nameZh} (${nameEn})`
+		: nameZh || nameEn || id;
+
+	return { nameZh, nameEn, displayName };
+};
+
+const dedupeKeywords = (values) => {
+	const seen = new Set();
+	const result = [];
+	for (const value of values) {
+		if (!value) continue;
+		const trimmed = String(value).trim();
+		if (!trimmed || seen.has(trimmed)) continue;
+		seen.add(trimmed);
+		result.push(trimmed);
+	}
+	return result;
+};
+
+const validateAgentNames = (configs) => {
+	const registry = new Map();
+	const errors = [];
+
+	const register = (agentId, label, key) => {
+		if (!key) return;
+		const existing = registry.get(key);
+		if (existing && existing !== agentId) {
+			errors.push(`duplicate ${label} '${key}' between ${existing} and ${agentId}`);
+			return;
+		}
+		registry.set(key, agentId);
+	};
+
+	for (const config of configs) {
+		if (!config) continue;
+		const id = config.id;
+		const nameZh = config.nameZh;
+		const nameEn = config.nameEn;
+		if (!nameZh && !nameEn) {
+			errors.push(`agent ${id} missing nameZh/nameEn`);
+			continue;
+		}
+		if (nameZh) register(id, "nameZh", `zh:${nameZh}`);
+		if (nameEn) register(id, "nameEn", `en:${nameEn.toLowerCase()}`);
+	}
+
+	if (errors.length > 0) {
+		for (const err of errors) {
+			console.error(`[loong] agent name conflict: ${err}`);
+		}
+		return false;
+	}
+
+	return true;
+};
+
 mkdirSync(LOONG_HOME, { recursive: true });
 mkdirSync(LOONG_SPACE, { recursive: true });
 if (IMESSAGE_ENABLED) {
@@ -1579,6 +1670,10 @@ function initAgents(config) {
 	const agentConfigs = resolveAgentConfigs(config);
 	if (agentConfigs.length === 0) return null;
 
+	if (!validateAgentNames(agentConfigs)) {
+		return null;
+	}
+
 	for (const agentConfig of agentConfigs) {
 		const agent = createAgentRuntime(agentConfig);
 		agents.set(agent.id, agent);
@@ -1644,10 +1739,14 @@ function normalizeAgentConfig(config, configPath, gatewayConfig) {
 	if (!config || typeof config !== "object") return null;
 	const configDir = dirname(configPath);
 	const id = config.id || basename(configDir);
-	const name = config.name || id;
-	const keywords = Array.isArray(config.keywords) && config.keywords.length > 0
+	const { nameZh, nameEn, displayName } = resolveAgentNames(config, id);
+	const keywordSeed = Array.isArray(config.keywords) && config.keywords.length > 0
 		? config.keywords
-		: [id];
+		: [];
+	const keywords = dedupeKeywords([...keywordSeed, nameZh, nameEn].filter(Boolean));
+	if (keywords.length === 0) {
+		keywords.push(id);
+	}
 	const sessionDir = config.sessionDir
 		? resolve(configDir, config.sessionDir)
 		: resolve(LOONG_SPACE, id);
@@ -1665,7 +1764,9 @@ function normalizeAgentConfig(config, configPath, gatewayConfig) {
 
 	return {
 		id,
-		name,
+		name: displayName,
+		nameZh,
+		nameEn,
 		keywords,
 		configDir,
 		systemPrompt: config.systemPrompt || null,
