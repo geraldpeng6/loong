@@ -50,6 +50,17 @@ const NOTIFY_LOCAL_ONLY = !["0", "false", "no"].includes(
 	String(process.env.LOONG_NOTIFY_LOCAL_ONLY || "true").toLowerCase(),
 );
 
+const IMG_PIPELINE_DIR = process.env.IMG_PIPELINE_DIR || "";
+const IMG_PIPELINE_QUERY_CMD = process.env.IMG_PIPELINE_QUERY_CMD
+	|| (IMG_PIPELINE_DIR ? join(IMG_PIPELINE_DIR, "bin", "query-embed") : "");
+const IMG_PIPELINE_DEFAULT_OUTPUT =
+	process.env.IMG_PIPELINE_OUTPUT_DIR || join(homedir(), "output");
+const IMG_PIPELINE_MAX_TOP = Number(process.env.IMG_PIPELINE_MAX_TOP || 20);
+const IMG_PIPELINE_MAX_BYTES = Number(process.env.IMG_PIPELINE_MAX_BYTES || 5 * 1024 * 1024);
+const IMG_PIPELINE_MAX_TOTAL_BYTES = Number(
+	process.env.IMG_PIPELINE_MAX_TOTAL_BYTES || 20 * 1024 * 1024,
+);
+
 const IMESSAGE_ENABLED_ENV = ["1", "true", "yes"].includes(
 	String(process.env.IMESSAGE_ENABLED || "").toLowerCase(),
 );
@@ -85,6 +96,31 @@ const DEFAULT_GATEWAY_CONFIG = {
 	notifyOnStart: true,
 	replyPrefixMode: "always",
 	keywordMode: "prefix",
+};
+
+const WORKSPACE_AGENTS_TEMPLATE = `# AGENTS.md - Workspace\n\nThis folder is home.\n\n## Every Session (required)\n1. Read SOUL.md (identity & behavior)\n2. Read MEMORY.md (long-term memory)\n3. If more context is needed, search memory/ for relevant dates/topics\n\n## Memory Workflow\n- memory/YYYY-MM-DD.md = daily logs (raw)\n- MEMORY.md = curated long-term memory\n- When the user says “remember”, write to today’s memory file and summarize into MEMORY.md\n\n## Search Guidance\n- Use rg/read to locate relevant entries in memory/\n- Summarize only what’s needed for the task\n\nKeep it concise, factual, and durable.\n`;
+
+const WORKSPACE_SOUL_TEMPLATE = `# SOUL\n\nDescribe the agent’s identity, tone, and behavioral boundaries here.\n`;
+
+const WORKSPACE_MEMORY_TEMPLATE = `# MEMORY\n\nThis file is your long-term memory. Always read it before working.\n\n## How to use\n- For missing context, search memory/ by keyword or date and pull only relevant parts\n- Record durable facts, preferences, decisions, and constraints\n- Keep sensitive data minimal; store only when explicitly asked\n\n## Index (optional)\n- Add brief pointers to important topics with links to memory/YYYY-MM-DD.md\n`;
+
+const ensureWorkspaceScaffold = ({ workspaceDir, memoryIndexFile, memoryDir }) => {
+	if (!workspaceDir) return;
+	mkdirSync(workspaceDir, { recursive: true });
+	if (memoryDir) {
+		mkdirSync(memoryDir, { recursive: true });
+	}
+	const agentsPath = join(workspaceDir, "AGENTS.md");
+	if (!existsSync(agentsPath)) {
+		writeFileSync(agentsPath, WORKSPACE_AGENTS_TEMPLATE);
+	}
+	const soulPath = join(workspaceDir, "SOUL.md");
+	if (!existsSync(soulPath)) {
+		writeFileSync(soulPath, WORKSPACE_SOUL_TEMPLATE);
+	}
+	if (memoryIndexFile && !existsSync(memoryIndexFile)) {
+		writeFileSync(memoryIndexFile, WORKSPACE_MEMORY_TEMPLATE);
+	}
 };
 
 const parseNamePair = (raw) => {
@@ -205,6 +241,83 @@ const normalizeStringList = (value) => {
 		return items.length > 0 ? items : null;
 	}
 	return null;
+};
+
+const resolveUserPath = (value, baseDir = homedir()) => {
+	const trimmed = String(value || "").trim();
+	if (!trimmed) return baseDir;
+	if (trimmed.startsWith("~")) {
+		const withoutTilde = trimmed.slice(1).replace(/^\/+/, "");
+		return join(homedir(), withoutTilde);
+	}
+	if (trimmed.startsWith("/")) return trimmed;
+	return resolve(baseDir, trimmed);
+};
+
+const EXTENSION_MIME_MAP = {
+	".png": "image/png",
+	".jpg": "image/jpeg",
+	".jpeg": "image/jpeg",
+	".webp": "image/webp",
+	".gif": "image/gif",
+	".bmp": "image/bmp",
+	".tiff": "image/tiff",
+	".tif": "image/tiff",
+	".mp3": "audio/mpeg",
+	".wav": "audio/wav",
+	".m4a": "audio/mp4",
+	".mp4": "video/mp4",
+	".mov": "video/quicktime",
+	".webm": "video/webm",
+	".pdf": "application/pdf",
+};
+
+const guessMimeType = (fileName) => {
+	if (!fileName) return "application/octet-stream";
+	const ext = extname(fileName).toLowerCase();
+	return EXTENSION_MIME_MAP[ext] || "application/octet-stream";
+};
+
+const runImgPipelineQuery = ({ query, outputDir, top }) => {
+	return new Promise((resolveResult, reject) => {
+		if (!IMG_PIPELINE_QUERY_CMD) {
+			reject(
+				new Error(
+					"IMG_PIPELINE_DIR or IMG_PIPELINE_QUERY_CMD not set. Configure env to use pipeline query.",
+				),
+			);
+			return;
+		}
+		if (!existsSync(IMG_PIPELINE_QUERY_CMD)) {
+			reject(new Error(`query-embed not found: ${IMG_PIPELINE_QUERY_CMD}`));
+			return;
+		}
+
+		const resolvedOutput = outputDir
+			? resolveUserPath(outputDir, homedir())
+			: IMG_PIPELINE_DEFAULT_OUTPUT;
+		const safeTop = Number.isFinite(Number(top)) ? Math.max(1, Number(top)) : 5;
+		const args = [query, resolvedOutput, "--json", "--top", String(safeTop), "--paths"];
+
+		const proc = spawn(IMG_PIPELINE_QUERY_CMD, args, { env: { ...process.env } });
+		let stdout = "";
+		let stderr = "";
+		proc.stdout.on("data", (chunk) => (stdout += chunk));
+		proc.stderr.on("data", (chunk) => (stderr += chunk));
+		proc.on("error", (err) => reject(err));
+		proc.on("close", (code) => {
+			if (code !== 0) {
+				reject(new Error(stderr || `query-embed exited with code ${code}`));
+				return;
+			}
+			try {
+				const parsed = JSON.parse(stdout.trim() || "[]");
+				resolveResult({ outputDir: resolvedOutput, results: parsed });
+			} catch (err) {
+				reject(new Error(`Failed to parse query-embed output: ${err.message}`));
+			}
+		});
+	});
 };
 
 const normalizeBoolean = (value) => {
@@ -482,6 +595,173 @@ const server = createServer((req, res) => {
 					sentCount,
 					scope: resolvedScope,
 					agentId: agent?.id ?? null,
+				});
+			})
+			.catch((err) => {
+				const status = err?.message === "Request body too large" ? 413 : 400;
+				sendJson(res, status, {
+					error: status === 413 ? "Request body too large" : "Invalid JSON body",
+				});
+			});
+		return;
+	}
+
+	// POST /api/pipeline/query-media - 调用 img-pipeline 查询并返回媒体内容
+	if (url.pathname === "/api/pipeline/query-media" && req.method === "POST") {
+		if (NOTIFY_LOCAL_ONLY && !isLocalRequest(req)) {
+			sendJson(res, 403, { error: "Forbidden" });
+			return;
+		}
+
+		readBody(req)
+			.then(async (body) => {
+				const {
+					query,
+					outputDir,
+					top = 5,
+					minScore,
+					includeContent = true,
+					includePaths = true,
+					maxBytes,
+					maxTotalBytes,
+					allowedMimeTypes,
+					allowedExtensions,
+				} = body || {};
+
+				if (!query || typeof query !== "string") {
+					sendJson(res, 400, { error: "Missing or invalid 'query' field" });
+					return;
+				}
+
+				const topNumber = Number(top);
+				if (!Number.isFinite(topNumber) || topNumber <= 0) {
+					sendJson(res, 400, { error: "Invalid 'top' field" });
+					return;
+				}
+
+				const safeTop = Math.min(topNumber, IMG_PIPELINE_MAX_TOP || topNumber);
+				const parsedMinScore = minScore == null ? null : Number(minScore);
+				if (parsedMinScore != null && (!Number.isFinite(parsedMinScore) || parsedMinScore < -1 || parsedMinScore > 1)) {
+					sendJson(res, 400, { error: "Invalid 'minScore' field" });
+					return;
+				}
+
+				const safeMaxBytes = Math.min(
+					Number.isFinite(Number(maxBytes)) ? Number(maxBytes) : IMG_PIPELINE_MAX_BYTES,
+					IMG_PIPELINE_MAX_BYTES,
+				);
+				const safeMaxTotalBytes = Math.min(
+					Number.isFinite(Number(maxTotalBytes)) ? Number(maxTotalBytes) : IMG_PIPELINE_MAX_TOTAL_BYTES,
+					IMG_PIPELINE_MAX_TOTAL_BYTES,
+				);
+
+				const allowedMimes = normalizeStringList(allowedMimeTypes);
+				const allowedExts = normalizeStringList(allowedExtensions);
+
+				let queryResult;
+				try {
+					queryResult = await runImgPipelineQuery({ query, outputDir, top: safeTop });
+				} catch (err) {
+					const message = err instanceof Error ? err.message : String(err);
+					sendJson(res, 500, { error: message });
+					return;
+				}
+
+				const results = [];
+				const skipped = [];
+				let totalBytes = 0;
+
+				for (const item of queryResult.results || []) {
+					const score = Number(item?.score ?? item?.sim ?? 0);
+					const hash = item?.hash || null;
+					if (!hash) continue;
+					if (parsedMinScore != null && score < parsedMinScore) {
+						skipped.push({ hash, reason: "below_min_score" });
+						continue;
+					}
+
+					let filePath = item?.path;
+					if (!filePath && queryResult.outputDir) {
+						const metaPath = join(queryResult.outputDir, "metadata", `${hash}.json`);
+						if (existsSync(metaPath)) {
+							try {
+								const meta = JSON.parse(readFileSync(metaPath, "utf8"));
+								filePath = meta?.filename || null;
+							} catch {
+								filePath = null;
+							}
+						}
+					}
+
+					if (!filePath) {
+						skipped.push({ hash, reason: "missing_path" });
+						continue;
+					}
+
+					const resolvedPath = resolveUserPath(filePath, homedir());
+					if (!existsSync(resolvedPath)) {
+						skipped.push({ hash, reason: "file_not_found" });
+						continue;
+					}
+
+					const stat = statSync(resolvedPath);
+					if (stat.size > safeMaxBytes) {
+						skipped.push({ hash, reason: "file_too_large", size: stat.size });
+						continue;
+					}
+					if (totalBytes + stat.size > safeMaxTotalBytes) {
+						skipped.push({ hash, reason: "total_limit_exceeded" });
+						continue;
+					}
+
+					const fileName = basename(resolvedPath);
+					const mimeType = guessMimeType(fileName);
+					if (allowedMimes) {
+						const ok = allowedMimes.some((entry) =>
+							mimeType === entry || mimeType.startsWith(entry),
+						);
+						if (!ok) {
+							skipped.push({ hash, reason: "mime_not_allowed", mimeType });
+							continue;
+						}
+					}
+					if (allowedExts) {
+						const ext = extname(fileName).toLowerCase().replace(".", "");
+						if (!allowedExts.includes(ext)) {
+							skipped.push({ hash, reason: "ext_not_allowed", ext });
+							continue;
+						}
+					}
+
+					const resultItem = {
+						score,
+						hash,
+						mimeType,
+						fileName,
+						sizeBytes: stat.size,
+					};
+					if (includePaths) {
+						resultItem.path = resolvedPath;
+					}
+					if (includeContent) {
+						resultItem.content = readFileSync(resolvedPath).toString("base64");
+					}
+
+					results.push(resultItem);
+					totalBytes += stat.size;
+					if (results.length >= safeTop) break;
+				}
+
+				sendJson(res, 200, {
+					success: true,
+					query,
+					outputDir: queryResult.outputDir,
+					top: safeTop,
+					minScore: parsedMinScore,
+					maxBytes: safeMaxBytes,
+					maxTotalBytes: safeMaxTotalBytes,
+					results,
+					skipped,
 				});
 			})
 			.catch((err) => {
@@ -1941,6 +2221,11 @@ function createAgentRuntime(config) {
 	if (config.memoryEnabled) {
 		mkdirSync(config.memoryDir, { recursive: true });
 	}
+	ensureWorkspaceScaffold({
+		workspaceDir: dirname(config.memoryIndexFile),
+		memoryIndexFile: config.memoryIndexFile,
+		memoryDir: config.memoryDir,
+	});
 
 	const args = [...piBaseArgs, "--mode", "rpc", "--session-dir", config.sessionDir];
 	if (config.systemPromptPath) {

@@ -33,6 +33,15 @@ export LOONG_NOTIFY_LOCAL_ONLY=1
 export LOONG_MAX_BODY_BYTES=262144
 export PI_EDIT_ROOT=/Users/jiale/code/loong
 
+# img-pipeline integration (optional)
+export IMG_PIPELINE_DIR=/Users/jiale/temp-workspaces/lucy2workspace/img-pipeline
+# or explicitly set query-embed path:
+# export IMG_PIPELINE_QUERY_CMD=/path/to/img-pipeline/bin/query-embed
+# optional limits for /api/pipeline/query-media:
+# export IMG_PIPELINE_MAX_TOP=20
+# export IMG_PIPELINE_MAX_BYTES=$((5*1024*1024))
+# export IMG_PIPELINE_MAX_TOTAL_BYTES=$((20*1024*1024))
+
 pnpm start
 ```
 
@@ -130,6 +139,7 @@ Notes:
 - WebSocket: `ws://localhost:17800/ws`
 - HTTP API:
   - `POST http://localhost:17800/api/notify` (local-only by default)
+  - `POST http://localhost:17800/api/pipeline/query-media` (query + media)
   - `POST http://localhost:17800/api/ask`
 
 ### POST /api/notify
@@ -145,6 +155,48 @@ Local-only by default (`LOONG_NOTIFY_LOCAL_ONLY=0` to allow remote). JSON body:
 - `scope`: `agent` (only clients on that agent) or `all` (broadcast).
 - `prefix`: default `true` when `agentId` is provided.
 - Request body limit via `LOONG_MAX_BODY_BYTES`.
+
+### POST /api/pipeline/query-media
+Run img-pipeline semantic search and return media contents.
+
+```json
+{
+  "query": "red square",
+  "outputDir": "~/output",
+  "top": 5,
+  "minScore": 0.2,
+  "includeContent": true,
+  "includePaths": true,
+  "maxBytes": 5242880,
+  "maxTotalBytes": 20971520,
+  "allowedMimeTypes": ["image/"]
+}
+```
+
+Response:
+```json
+{
+  "success": true,
+  "outputDir": "/Users/you/output",
+  "results": [
+    {
+      "score": 0.83,
+      "hash": "...",
+      "mimeType": "image/png",
+      "fileName": "image.png",
+      "sizeBytes": 12345,
+      "path": "/path/to/image.png",
+      "content": "base64..."
+    }
+  ],
+  "skipped": []
+}
+```
+
+Notes:
+- Requires `IMG_PIPELINE_DIR` or `IMG_PIPELINE_QUERY_CMD`.
+- Limits are enforced by `IMG_PIPELINE_MAX_TOP/IMG_PIPELINE_MAX_BYTES/IMG_PIPELINE_MAX_TOTAL_BYTES`.
+- `allowedMimeTypes` supports prefixes (e.g., `image/`, `audio/`).
 
 ### POST /api/ask
 Send a prompt to the current agent and return its reply.
