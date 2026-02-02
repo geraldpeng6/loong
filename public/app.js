@@ -158,7 +158,7 @@ const handleResponse = (payload) => {
   if (payload.command === "set_model" && payload.success) {
     currentModel = payload.data || currentModel;
     const label = payload.data ? `${payload.data.provider}/${payload.data.id}` : "";
-    appendMessage("system", label ? `模型已切换到 ${label}` : "模型已切换");
+    appendMessage("system", label ? `模型已切换到 ${label}` : "模型已切换", { timestamp: Date.now() });
     send({ type: "get_state" });
     return;
   }
@@ -171,11 +171,11 @@ const handleResponse = (payload) => {
 
   if (payload.command === "fork" && payload.success) {
     if (payload.data?.cancelled) {
-      appendMessage("system", "分支创建被取消");
+      appendMessage("system", "分支创建被取消", { timestamp: Date.now() });
     } else {
       inputEl.value = payload.data?.text || "";
       inputEl.focus();
-      appendMessage("system", "已回到该节点，输入框已填充");
+      appendMessage("system", "已回到该节点，输入框已填充", { timestamp: Date.now() });
       send({ type: "get_messages" });
       send({ type: "get_state" });
       send({ type: "list_sessions" });
@@ -193,7 +193,7 @@ const handleResponse = (payload) => {
 
 const handleEvent = (payload) => {
   if (payload.type === "gateway_message") {
-    appendMessage("system", payload.text || "");
+    appendMessage("system", payload.text || "", { timestamp: Date.now() });
     return;
   }
 
@@ -207,7 +207,7 @@ const handleEvent = (payload) => {
     pendingUser = null;
     latestMessages = null;
     latestForkMessages = null;
-    appendMessage("system", `已切换到 ${currentAgentName || currentAgentId}`.trim());
+    appendMessage("system", `已切换到 ${currentAgentName || currentAgentId}`.trim(), { timestamp: Date.now() });
     renderAgentOptions();
     send({ type: "get_state" });
     send({ type: "get_messages" });
@@ -237,7 +237,7 @@ const handleEvent = (payload) => {
         localPromptQueue.shift();
         return;
       }
-      pendingUser = appendMessage("user", "");
+      pendingUser = appendMessage("user", "", { timestamp: message.timestamp || null });
       applyMessageContent(pendingUser, message);
       return;
     }
@@ -263,14 +263,14 @@ const handleEvent = (payload) => {
     }
 
     if (message.role === "assistant") {
-      const target = pendingAssistant || appendMessage("assistant", "");
+      const target = pendingAssistant || appendMessage("assistant", "", { timestamp: message.timestamp || null });
       applyMessageContent(target, message);
       pendingAssistant = null;
       return;
     }
 
     if (message.role === "toolResult") {
-      const target = appendMessage("tool", "");
+      const target = appendMessage("tool", "", { timestamp: message.timestamp || null });
       applyMessageContent(target, message);
       return;
     }
@@ -286,7 +286,7 @@ const handleEvent = (payload) => {
         localPromptQueue.shift();
         return;
       }
-      const target = appendMessage("user", "");
+      const target = appendMessage("user", "", { timestamp: message.timestamp || null });
       applyMessageContent(target, message);
     }
   }
@@ -323,7 +323,10 @@ const renderSessions = (sessions) => {
     }
 
     const title = document.createElement("div");
-    title.textContent = `${entry.id}  ${entry.name}`;
+    const titleText = entry.name && entry.id && entry.name !== entry.id
+      ? `${entry.id}  ${entry.name}`
+      : entry.name || entry.id;
+    title.textContent = titleText || "";
 
     const meta = document.createElement("div");
     meta.className = "session-meta";
@@ -350,14 +353,17 @@ const renderMessages = (messages, forkMessages = []) => {
   for (const msg of messages) {
     if (msg.role === "user" || msg.role === "user-with-attachments") {
       const forkEntry = forkMessages[userIndex];
-      const target = appendMessage("user", "", { forkEntryId: forkEntry?.entryId || null });
+      const target = appendMessage("user", "", {
+        forkEntryId: forkEntry?.entryId || null,
+        timestamp: msg.timestamp || null,
+      });
       applyMessageContent(target, msg);
       userIndex += 1;
     } else if (msg.role === "assistant") {
-      const target = appendMessage("assistant", "");
+      const target = appendMessage("assistant", "", { timestamp: msg.timestamp || null });
       applyMessageContent(target, msg);
     } else if (msg.role === "toolResult") {
-      const target = appendMessage("tool", "");
+      const target = appendMessage("tool", "", { timestamp: msg.timestamp || null });
       applyMessageContent(target, msg);
     }
   }
@@ -464,7 +470,8 @@ const updateMessageActions = (target) => {
   if (target.role === "user" && target.forkEntryId) {
     const button = document.createElement("button");
     button.className = "message-action";
-    button.textContent = "↩ 返回此处";
+    button.textContent = "↩";
+    button.title = "返回此处";
     button.addEventListener("click", () => {
       send({ type: "fork", entryId: target.forkEntryId });
     });
@@ -485,11 +492,12 @@ const applyMessageContent = (target, message) => {
   } else {
     target.attachmentsEl.style.display = "none";
   }
+  setMessageTimestamp(target, message.timestamp);
   updateMessageActions(target);
   messagesEl.scrollTop = messagesEl.scrollHeight;
 };
 
-const appendMessage = (role, text, { forkEntryId = null } = {}) => {
+const appendMessage = (role, text, { forkEntryId = null, timestamp = null } = {}) => {
   const container = document.createElement("div");
   container.className = `message ${role}`;
 
@@ -501,6 +509,10 @@ const appendMessage = (role, text, { forkEntryId = null } = {}) => {
   attachmentsEl.className = "attachments";
   attachmentsEl.style.display = "none";
   container.appendChild(attachmentsEl);
+
+  const metaEl = document.createElement("div");
+  metaEl.className = "message-meta";
+  container.appendChild(metaEl);
 
   const actionsEl = document.createElement("div");
   actionsEl.className = "message-actions";
@@ -515,10 +527,13 @@ const appendMessage = (role, text, { forkEntryId = null } = {}) => {
     textEl,
     attachmentsEl,
     actionsEl,
+    metaEl,
     rawText: text || "",
     forkEntryId,
+    timestamp: timestamp || null,
   };
   setMessageText(messageObj, text || "");
+  setMessageTimestamp(messageObj, timestamp);
   updateMessageActions(messageObj);
   return messageObj;
 };
@@ -580,6 +595,36 @@ const renderAttachment = (attachment) => {
   }
   wrapper.appendChild(link);
   return wrapper;
+};
+
+const formatTimestamp = (value) => {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString("zh-CN", {
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+};
+
+const setMessageTimestamp = (target, timestamp) => {
+  if (!target?.metaEl) return;
+  if (timestamp) {
+    target.timestamp = timestamp;
+  }
+  const formatted = formatTimestamp(target.timestamp);
+  if (formatted) {
+    target.metaEl.textContent = formatted;
+    target.metaEl.style.display = "block";
+  } else {
+    target.metaEl.textContent = "";
+    target.metaEl.style.display = "none";
+  }
 };
 
 const updateProviderList = () => {
@@ -706,7 +751,7 @@ sendBtn.addEventListener("click", () => {
   const raw = inputEl.value;
   if (!raw.trim()) return;
   localPromptQueue.push(raw);
-  appendMessage("user", raw);
+  appendMessage("user", raw, { timestamp: Date.now() });
   inputEl.value = "";
   send({ type: "prompt", message: raw });
 });

@@ -196,6 +196,12 @@ main {
   gap: 8px;
 }
 
+.message-meta {
+  font-size: 10px;
+  color: #888888;
+  text-align: right;
+}
+
 .message-actions {
   display: flex;
   justify-content: flex-end;
@@ -204,15 +210,19 @@ main {
 .message-action {
   border: 1px solid #cccccc;
   background: transparent;
-  padding: 4px 8px;
+  padding: 2px 6px;
   border-radius: 6px;
-  font-size: 11px;
+  font-size: 12px;
   cursor: pointer;
 }
 
 .message.user .message-action {
   border-color: #ffffff;
   color: #ffffff;
+}
+
+.message.user .message-meta {
+  color: #cccccc;
 }
 
 .attachment {
