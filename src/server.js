@@ -81,7 +81,6 @@ const IMESSAGE_OUTBOUND_DIR =
 	process.env.IMESSAGE_OUTBOUND_DIR || join(LOONG_HOME, "imessage-outbound");
 
 const DEFAULT_GATEWAY_CONFIG = {
-	agentsDir: "agents",
 	defaultAgent: null,
 	notifyOnStart: true,
 	replyPrefixMode: "always",
@@ -140,6 +139,102 @@ const dedupeKeywords = (values) => {
 		result.push(trimmed);
 	}
 	return result;
+};
+
+const parseFrontmatter = (content) => {
+	if (typeof content !== "string") return { frontmatter: null, body: content || "" };
+	const match = content.match(/^---\s*\n([\s\S]*?)\n---\s*\n?/);
+	if (!match) return { frontmatter: null, body: content };
+	const raw = match[1];
+	const body = content.slice(match[0].length);
+	const frontmatter = {};
+	const lines = raw.split(/\r?\n/);
+	let currentKey = null;
+	for (const line of lines) {
+		const trimmed = line.trim();
+		if (!trimmed || trimmed.startsWith("#")) continue;
+		const kv = trimmed.match(/^([A-Za-z0-9_-]+)\s*:\s*(.*)$/);
+		if (kv) {
+			const key = kv[1];
+			let value = kv[2] ?? "";
+			if (value === "") {
+				frontmatter[key] = [];
+				currentKey = key;
+				continue;
+			}
+			value = value.trim();
+			if (
+				(value.startsWith("\"") && value.endsWith("\"")) ||
+				(value.startsWith("'") && value.endsWith("'"))
+			) {
+				value = value.slice(1, -1);
+			}
+			frontmatter[key] = value;
+			currentKey = null;
+			continue;
+		}
+		const listMatch = trimmed.match(/^-\s*(.*)$/);
+		if (listMatch && currentKey) {
+			let value = listMatch[1].trim();
+			if (
+				(value.startsWith("\"") && value.endsWith("\"")) ||
+				(value.startsWith("'") && value.endsWith("'"))
+			) {
+				value = value.slice(1, -1);
+			}
+			if (!Array.isArray(frontmatter[currentKey])) {
+				frontmatter[currentKey] = [];
+			}
+			frontmatter[currentKey].push(value);
+		}
+	}
+	return { frontmatter, body };
+};
+
+const normalizeStringList = (value) => {
+	if (!value) return null;
+	if (Array.isArray(value)) {
+		const items = value.map((item) => String(item).trim()).filter(Boolean);
+		return items.length > 0 ? items : null;
+	}
+	if (typeof value === "string") {
+		const items = value
+			.split(",")
+			.map((item) => item.trim())
+			.filter(Boolean);
+		return items.length > 0 ? items : null;
+	}
+	return null;
+};
+
+const normalizeBoolean = (value) => {
+	if (typeof value === "boolean") return value;
+	if (typeof value === "number") return value !== 0;
+	if (typeof value === "string") {
+		const trimmed = value.trim().toLowerCase();
+		if (["true", "1", "yes", "y", "on"].includes(trimmed)) return true;
+		if (["false", "0", "no", "n", "off"].includes(trimmed)) return false;
+	}
+	return null;
+};
+
+const resolveSkillPath = (value, baseDir) => {
+	const trimmed = String(value || "").trim();
+	if (!trimmed) return "";
+	if (trimmed.startsWith("~")) {
+		const withoutTilde = trimmed.slice(1).replace(/^\/+/, "");
+		return join(homedir(), withoutTilde);
+	}
+	if (trimmed.startsWith("/")) return trimmed;
+	return resolve(baseDir, trimmed);
+};
+
+const resolveSkills = (value, baseDir) => {
+	const list = normalizeStringList(value);
+	if (!list || list.length === 0) return null;
+	const resolved = list.map((entry) => resolveSkillPath(entry, baseDir)).filter(Boolean);
+	const deduped = Array.from(new Set(resolved));
+	return deduped.length > 0 ? deduped : null;
 };
 
 const validateAgentNames = (configs) => {
@@ -1695,43 +1790,59 @@ function initAgents(config) {
 }
 
 function resolveAgentConfigs(config) {
-	const agentsDir = resolve(LOONG_HOME, config.agentsDir || "agents");
+	const agentsDir = join(homedir(), ".pi", "agent", "agents");
 	const results = [];
 
-	const addAgentConfig = (configPath) => {
-		if (!existsSync(configPath)) return;
-		try {
-			const raw = readFileSync(configPath, "utf8");
-			const parsed = JSON.parse(raw);
-			const normalized = normalizeAgentConfig(parsed, configPath, config);
-			if (normalized) results.push(normalized);
-		} catch (err) {
-			console.error(`[loong] failed to read agent config: ${configPath} (${err.message})`);
-		}
-	};
-
-	if (Array.isArray(config.agents) && config.agents.length > 0) {
-		for (const entry of config.agents) {
-			if (!entry || entry.enabled === false) continue;
-			const configPath = entry.configPath
-				? resolve(LOONG_HOME, entry.configPath)
-				: resolve(agentsDir, entry.id || "", "agent.json");
-			addAgentConfig(configPath);
-		}
-		return results;
-	}
-
 	if (!existsSync(agentsDir)) {
-		console.warn(`[loong] agents dir not found: ${agentsDir}`);
+		console.warn(`[loong] pi agents dir not found: ${agentsDir}`);
 		return results;
 	}
 
 	const entries = readdirSync(agentsDir, { withFileTypes: true });
 	for (const entry of entries) {
-		if (!entry.isDirectory()) continue;
-		const configPath = join(agentsDir, entry.name, "agent.json");
-		addAgentConfig(configPath);
+		if (!entry.isFile() && !entry.isSymbolicLink()) continue;
+		if (!entry.name.endsWith(".md")) continue;
+		const filePath = join(agentsDir, entry.name);
+		let raw;
+		try {
+			raw = readFileSync(filePath, "utf8");
+		} catch (err) {
+			console.error(`[loong] failed to read pi agent: ${filePath} (${err.message})`);
+			continue;
+		}
+		const { frontmatter, body } = parseFrontmatter(raw);
+		const name = typeof frontmatter?.name === "string" ? frontmatter.name.trim() : "";
+		const description = typeof frontmatter?.description === "string" ? frontmatter.description.trim() : "";
+		if (!name || !description) {
+			console.warn(`[loong] pi agent missing name/description: ${filePath}`);
+			continue;
+		}
+
+		const keywords = normalizeStringList(frontmatter.keywords || frontmatter.keyword);
+		const tools = normalizeStringList(frontmatter.tools);
+		const skills = resolveSkills(frontmatter.skills, dirname(filePath));
+		const noSkills = normalizeBoolean(frontmatter.noSkills) ?? false;
+		const modelId = frontmatter.model ? String(frontmatter.model).trim() : null;
+		const provider = frontmatter.provider ? String(frontmatter.provider).trim() : null;
+		const thinkingLevel = frontmatter.thinkingLevel || frontmatter.thinking || null;
+
+		const agentConfig = {
+			id: name,
+			name,
+			keywords,
+			systemPrompt: body.trim() || null,
+			model: modelId || provider ? { modelId: modelId || null, provider: provider || null } : null,
+			thinkingLevel: thinkingLevel ? String(thinkingLevel).trim() : null,
+			tools,
+			skills,
+			noSkills: noSkills || null,
+		};
+
+		const syntheticPath = join(LOONG_HOME, "pi-agents", name, "agent.json");
+		const normalized = normalizeAgentConfig(agentConfig, syntheticPath, config);
+		if (normalized) results.push(normalized);
 	}
+
 	return results;
 }
 
@@ -1776,6 +1887,8 @@ function normalizeAgentConfig(config, configPath, gatewayConfig) {
 		model: config.model || null,
 		thinkingLevel: config.thinkingLevel || config.thinking || null,
 		tools: Array.isArray(config.tools) ? config.tools : null,
+		skills: Array.isArray(config.skills) ? config.skills : null,
+		noSkills: config.noSkills === true,
 		sessionDir,
 		memoryDir,
 		memoryIndexFile,
@@ -1854,6 +1967,14 @@ function createAgentRuntime(config) {
 			args.push("--no-tools");
 		} else {
 			args.push("--tools", config.tools.join(","));
+		}
+	}
+	if (config.noSkills) {
+		args.push("--no-skills");
+	}
+	if (Array.isArray(config.skills) && config.skills.length > 0) {
+		for (const skill of config.skills) {
+			args.push("--skill", skill);
 		}
 	}
 

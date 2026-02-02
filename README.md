@@ -49,62 +49,37 @@ Gateway config file (default: `~/.loong/config.json`):
 
 ```json
 {
-  "agentsDir": "agents",
-  "defaultAgent": "jarvis",
+  "defaultAgent": "reviewer",
   "notifyOnStart": true,
-  "replyPrefixMode": "always"
+  "replyPrefixMode": "always",
+  "keywordMode": "prefix"
 }
 ```
 
-Agent config file (default: `~/.loong/agents/<id>/agent.json`):
+## Agents (pi subagent format)
 
-```json
-{
-  "id": "jarvis",
-  "name": "Jarvis",
-  "keywords": ["jarvis", "贾维斯"],
-  "systemPrompt": "You are Jarvis, a helpful coding assistant.",
-  "model": {
-    "provider": "openai-codex",
-    "modelId": "gpt-5.2-codex"
-  },
-  "thinkingLevel": "medium",
-  "tools": ["read", "bash", "edit", "write"],
-  "sessionDir": "sessions",
-  "memory": {
-    "enabled": true,
-    "dir": "memory",
-    "indexFile": "MEMORY.md"
-  }
-}
-```
+Loong loads agents from `~/.pi/agent/agents/*.md` using the same frontmatter format as pi subagent
+definitions. Loong does **not** read `~/.loong/agents` anymore.
 
-Another agent example:
-
-```json
-{
-  "id": "gump",
-  "name": "Gump",
-  "keywords": ["gump", "阿甘"],
-  "systemPrompt": "You are Gump, a warm and patient companion.",
-  "model": {
-    "provider": "kimi-coding",
-    "modelId": "k2p5"
-  },
-  "thinkingLevel": "medium",
-  "tools": ["read", "bash", "edit", "write"],
-  "sessionDir": "sessions",
-  "memory": {
-    "enabled": true,
-    "dir": "memory",
-    "indexFile": "MEMORY.md"
-  }
-}
+```markdown
+---
+name: reviewer
+description: Code review specialist
+tools: read, grep, find, ls, bash
+model: openai-codex/gpt-5.2-codex
+thinkingLevel: medium
+noSkills: true
+skills:
+  - ~/.pi/skills/review
+---
+You are a seasoned code reviewer.
 ```
 
 Notes:
-- `systemPromptPath` / `appendSystemPromptPath` can point to files (relative to agent dir)
-- Each agent uses its own `sessionDir` and `memory` directory
+- `name` is the agent id used for routing.
+- `skills`/`noSkills` are optional; when set, Loong passes `--skill`/`--no-skills` to the pi process.
+- Memory files are stored under `~/.loong/pi-agents/<name>/memory` with index `MEMORY.md`.
+- Session history is stored under `~/loongspace/<name>` (or `LOONG_SPACE`).
 
 ## iMessage (optional)
 Requires macOS + Messages signed in + `imsg` CLI.
@@ -139,7 +114,7 @@ Notes:
 - If `IMESSAGE_DB_PATH` is not set, defaults to `~/Library/Messages/chat.db`.
 - Auto-enable: `LOONG_IMESSAGE_AUTO=1` (default) turns iMessage on when the DB exists. Disable with `IMESSAGE_ENABLED=0` or `LOONG_IMESSAGE_AUTO=0`.
 - Session mode: `IMESSAGE_SESSION_MODE=shared` (one shared session) or `per-chat` (map per chat).
-- Mapping file (per-chat mode only): `~/.loong/agents/<id>/imessage-session-map.json` (per agent).
+- Mapping file (per-chat mode only): `~/.loong/pi-agents/<id>/imessage-session-map.json` (per agent).
 - Outbound media files are written to `IMESSAGE_OUTBOUND_DIR` (default: `~/.loong/imessage-outbound`).
 - Replies are sent back to the same `chat_id` (if present) or sender handle.
 - Keyword routing (prefix at start only):
