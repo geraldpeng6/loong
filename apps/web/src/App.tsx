@@ -254,7 +254,7 @@ const App = () => {
               type="button"
               className={cn(
                 "flex h-10 w-6 items-center justify-center border border-border/70 bg-background text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:bg-muted/30",
-                sidebarCollapsed ? "rounded-r-md border-l-0" : "rounded-l-md border-r-0",
+                "rounded-r-md border-l-0",
               )}
               onClick={toggleSidebar}
               aria-label="Toggle sidebar"
