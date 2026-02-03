@@ -78,6 +78,7 @@ const Sidebar = ({
           <SelectTrigger
             className="group relative h-10 w-10 flex-none justify-center px-0 text-xs"
             aria-label="Select agent"
+            hideIcon
           >
             <div className="relative flex h-10 w-10 items-center justify-center">
               <img
