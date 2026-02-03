@@ -61,7 +61,7 @@ const SessionList = ({
             key={session.id}
             className={cn(
               "flex min-w-0 items-center justify-between gap-2 rounded-lg px-2 py-2 transition-colors",
-              isActive ? "bg-foreground text-background" : "bg-transparent",
+              isActive ? "bg-muted/40" : "bg-transparent",
               !isActive && !isEditing && "hover:bg-muted/40",
               !isEditing && "cursor-pointer",
             )}

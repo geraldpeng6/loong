@@ -65,7 +65,7 @@ const Sidebar = ({
   return (
     <aside
       className={cn(
-        "flex h-full flex-col bg-muted/30 transition-all",
+        "flex h-full flex-col bg-background transition-all sm:bg-muted/30",
         isCollapsed ? `overflow-hidden ${effectiveWidthClass}` : effectiveWidthClass,
       )}
     >
@@ -78,17 +78,26 @@ const Sidebar = ({
           disabled={agents.length === 0}
         >
           <SelectTrigger
-            className="h-10 w-10 flex-none justify-center px-0 text-xs"
+            className="group relative h-10 w-10 flex-none justify-center px-0 text-xs"
             aria-label="Select agent"
           >
-            <div className={cn("flex min-w-0 items-center gap-3", isCollapsed && "gap-0")}>
+            <div className="relative flex h-10 w-10 items-center justify-center">
               <img
                 src={resolveAgentImage(currentAgent?.id)}
                 alt={agentLabel}
                 className="h-9 w-9 rounded-md object-cover"
                 onError={handleImageError}
               />
-              <span className="sr-only">{agentLabel}</span>
+              <span
+                className={cn(
+                  "pointer-events-auto absolute left-1/2 top-full mt-1 -translate-x-1/2",
+                  "whitespace-nowrap rounded-md bg-background/95 px-2 py-1 text-[10px]",
+                  "font-semibold text-foreground shadow-md opacity-0 transition-opacity",
+                  "group-hover:opacity-100 group-focus-within:opacity-100",
+                )}
+              >
+                {agentLabel}
+              </span>
             </div>
           </SelectTrigger>
           <SelectContent
@@ -123,7 +132,7 @@ const Sidebar = ({
           <div className="flex flex-shrink-0 items-center gap-1">
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon" onClick={onNewSession}>
+                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onNewSession}>
                   <PlusIcon size={16} />
                 </Button>
               </TooltipTrigger>
@@ -131,7 +140,7 @@ const Sidebar = ({
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon" onClick={onRefreshSessions}>
+                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onRefreshSessions}>
                   <RefreshIcon size={16} />
                 </Button>
               </TooltipTrigger>

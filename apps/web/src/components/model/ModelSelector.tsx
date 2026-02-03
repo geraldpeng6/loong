@@ -238,7 +238,7 @@ const ModelSelector = ({
             align="start"
             sideOffset={4}
             avoidCollisions={false}
-            className="min-w-[200px] sm:min-w-[240px]"
+            className="min-w-[200px] bg-background/95 shadow-lg backdrop-blur sm:min-w-[240px]"
           >
             {quickModels.map((model) => (
               <SelectItem key={model.id} value={model.id} className="cursor-pointer">
