@@ -96,9 +96,6 @@ export const createTaskRunner = ({
     }
 
     try {
-      if (task.onStart) {
-        await task.onStart();
-      }
       const sessionFile = await ensureAgentSession?.(agent, task);
       if (task.subagentRunId && subagentRuns) {
         const run = subagentRuns.get(task.subagentRunId);
@@ -112,13 +109,22 @@ export const createTaskRunner = ({
       const snapshot = await sendAgentRequest?.(agent, { type: "get_messages" }).catch(() => null);
       task.baseMessageCount = snapshot?.data?.messages?.length ?? null;
       const message = buildPromptText?.(task) ?? task.text ?? "";
+      if (task.onStart) {
+        try {
+          await task.onStart();
+        } catch (err) {
+          const startMessage = err instanceof Error ? err.message : String(err);
+          console.error(`[loong] task ${task.id} onStart failed: ${startMessage}`);
+        }
+      }
       sendToAgent?.(agent, { type: "prompt", message });
     } catch (err) {
-      clearTaskTimeout(task);
-      console.error(`[loong] agent ${agent.id} session error: ${err.message}`);
-      agent.busy = false;
-      agent.currentTask = null;
-      processNextAgent(agent);
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[loong] agent ${agent.id} session error: ${message}`);
+      await failCurrentTask(agent, task, `启动失败：${message}`, {
+        skipQueue: agent.offline,
+      });
+      return;
     } finally {
       broadcastAgentStatus?.(agent);
     }
