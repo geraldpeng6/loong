@@ -8,7 +8,6 @@ import ModelSelector from "@/components/model/ModelSelector";
 import AgentSelector from "@/components/sidebar/AgentSelector";
 import ArrowNarrowLeftIcon from "@/components/ui/arrow-narrow-left-icon";
 import ArrowNarrowRightIcon from "@/components/ui/arrow-narrow-right-icon";
-import { Button } from "@/components/ui/button";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useGateway } from "@/hooks/useGateway";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
@@ -155,8 +154,8 @@ const App = () => {
     mobileSidebarOpen ? "translate-x-0" : "-translate-x-full",
   );
   const toggleClassName = cn(
-    "absolute top-1/2 z-30 h-8 w-8 -translate-y-1/2",
-    sidebarCollapsed ? "left-2" : "left-[15rem]",
+    "absolute top-1/2 z-30 -translate-y-1/2",
+    sidebarCollapsed ? "left-0" : "left-64 -ml-1",
   );
 
   return (
@@ -250,19 +249,23 @@ const App = () => {
           />
         </div>
         {!isMobile ? (
-          <Button
-            variant="ghost"
-            size="icon"
-            className={toggleClassName}
-            onClick={toggleSidebar}
-            aria-label="Toggle sidebar"
-          >
-            {sidebarCollapsed ? (
-              <ArrowNarrowRightIcon size={16} />
-            ) : (
-              <ArrowNarrowLeftIcon size={16} />
-            )}
-          </Button>
+          <div className={toggleClassName}>
+            <button
+              type="button"
+              className={cn(
+                "flex h-10 w-6 items-center justify-center border border-border/70 bg-background text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:bg-muted/30",
+                sidebarCollapsed ? "rounded-r-md border-l-0" : "rounded-l-md border-r-0",
+              )}
+              onClick={toggleSidebar}
+              aria-label="Toggle sidebar"
+            >
+              {sidebarCollapsed ? (
+                <ArrowNarrowRightIcon size={16} />
+              ) : (
+                <ArrowNarrowLeftIcon size={16} />
+              )}
+            </button>
+          </div>
         ) : null}
         <div className="pointer-events-none absolute left-0 right-0 top-14 h-px bg-border" />
       </div>
