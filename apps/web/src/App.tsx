@@ -5,6 +5,7 @@ import Sidebar from "@/components/sidebar/Sidebar";
 import MessageList from "@/components/chat/MessageList";
 import Composer from "@/components/chat/Composer";
 import ModelSelector from "@/components/model/ModelSelector";
+import AgentSelector from "@/components/sidebar/AgentSelector";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useGateway } from "@/hooks/useGateway";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
@@ -170,9 +171,6 @@ const App = () => {
               onTouchEnd={handleTouchEnd}
             >
               <Sidebar
-                agents={state.agents}
-                currentAgentId={state.currentAgentId}
-                onAgentChange={switchAgent}
                 sessions={state.sessions}
                 currentSessionPath={state.sessionFile}
                 onNewSession={createNewSession}
@@ -187,9 +185,6 @@ const App = () => {
           </>
         ) : (
           <Sidebar
-            agents={state.agents}
-            currentAgentId={state.currentAgentId}
-            onAgentChange={switchAgent}
             sessions={state.sessions}
             currentSessionPath={state.sessionFile}
             onNewSession={createNewSession}
@@ -209,6 +204,15 @@ const App = () => {
             sidebarCollapsed={sidebarIsCollapsed}
             theme={theme}
             onToggleTheme={toggleTheme}
+            agentSelector={
+              <AgentSelector
+                agents={state.agents}
+                currentAgentId={state.currentAgentId}
+                onAgentChange={switchAgent}
+                triggerClassName="h-8 w-8"
+                imageClassName="h-7 w-7"
+              />
+            }
             modelSelector={
               <ModelSelector
                 availableModels={state.availableModels}
