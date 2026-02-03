@@ -70,7 +70,7 @@ const Sidebar = ({
       )}
     >
       <div
-        className={cn("flex items-center gap-2 px-3 py-3 sm:px-4", isCollapsed && "justify-center")}
+        className={cn("flex h-14 items-center gap-2 px-3 sm:px-4", isCollapsed && "justify-center")}
       >
         <Select
           value={currentAgent?.id || ""}
