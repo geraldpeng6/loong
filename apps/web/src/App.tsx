@@ -155,7 +155,7 @@ const App = () => {
   );
   const toggleClassName = cn(
     "absolute top-1/2 z-30 -translate-y-1/2",
-    sidebarCollapsed ? "left-0" : "left-64 -ml-1",
+    sidebarCollapsed ? "left-0" : "left-64",
   );
 
   return (
