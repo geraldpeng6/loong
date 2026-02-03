@@ -78,10 +78,7 @@ const Sidebar = ({
           disabled={agents.length === 0}
         >
           <SelectTrigger
-            className={cn(
-              "h-10 flex-1 justify-between gap-3 px-2 text-xs",
-              isCollapsed && "h-10 w-10 flex-none justify-center px-0",
-            )}
+            className="h-10 w-10 flex-none justify-center px-0 text-xs"
             aria-label="Select agent"
           >
             <div className={cn("flex min-w-0 items-center gap-3", isCollapsed && "gap-0")}>
@@ -91,11 +88,7 @@ const Sidebar = ({
                 className="h-9 w-9 rounded-md object-cover"
                 onError={handleImageError}
               />
-              {isCollapsed ? (
-                <span className="sr-only">{agentLabel}</span>
-              ) : (
-                <span className="truncate text-xs font-semibold">{agentLabel}</span>
-              )}
+              <span className="sr-only">{agentLabel}</span>
             </div>
           </SelectTrigger>
           <SelectContent
