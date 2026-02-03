@@ -17,6 +17,7 @@
     "create:agent": "node scripts/create-agent.js",
     "create:skill": "node scripts/create-skill.js",
     "check:pi": "node scripts/check-pi.js",
+    "cephalon:proxy": "node scripts/cephalon-proxy.js",
     "lint": "eslint . --max-warnings=0",
     "lint:fix": "eslint . --fix --max-warnings=0",
     "format": "prettier --write .",
