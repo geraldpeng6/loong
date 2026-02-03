@@ -6,6 +6,9 @@ import MessageList from "@/components/chat/MessageList";
 import Composer from "@/components/chat/Composer";
 import ModelSelector from "@/components/model/ModelSelector";
 import AgentSelector from "@/components/sidebar/AgentSelector";
+import ArrowNarrowLeftIcon from "@/components/ui/arrow-narrow-left-icon";
+import ArrowNarrowRightIcon from "@/components/ui/arrow-narrow-right-icon";
+import { Button } from "@/components/ui/button";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useGateway } from "@/hooks/useGateway";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
@@ -84,7 +87,6 @@ const App = () => {
     deleteSession(session.path);
   };
 
-  const sidebarIsCollapsed = isMobile ? !mobileSidebarOpen : sidebarCollapsed;
   const SWIPE_THRESHOLD = 60;
   const EDGE_THRESHOLD = 24;
 
@@ -152,6 +154,10 @@ const App = () => {
     "fixed inset-y-0 left-0 z-50 w-[80vw] max-w-[18rem] transform transition-transform duration-200",
     mobileSidebarOpen ? "translate-x-0" : "-translate-x-full",
   );
+  const toggleClassName = cn(
+    "absolute top-1/2 z-30 h-8 w-8 -translate-y-1/2",
+    sidebarCollapsed ? "left-2" : "left-[15rem]",
+  );
 
   return (
     <TooltipProvider>
@@ -205,8 +211,6 @@ const App = () => {
         <div className="flex flex-1 flex-col">
           <Header
             busy={state.busy}
-            onToggleSidebar={toggleSidebar}
-            sidebarCollapsed={sidebarIsCollapsed}
             agentSelector={
               <AgentSelector
                 agents={state.agents}
@@ -245,6 +249,21 @@ const App = () => {
             busy={state.busy}
           />
         </div>
+        {!isMobile ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            className={toggleClassName}
+            onClick={toggleSidebar}
+            aria-label="Toggle sidebar"
+          >
+            {sidebarCollapsed ? (
+              <ArrowNarrowRightIcon size={16} />
+            ) : (
+              <ArrowNarrowLeftIcon size={16} />
+            )}
+          </Button>
+        ) : null}
         <div className="pointer-events-none absolute left-0 right-0 top-14 h-px bg-border" />
       </div>
     </TooltipProvider>
