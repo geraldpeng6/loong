@@ -1,3 +1,5 @@
+export type GatewayStatus = "connecting" | "connected" | "disconnected";
+
 export type GatewayAgent = {
   id: string;
   name?: string;
@@ -31,6 +33,7 @@ export type GatewayMessage = {
     content?: string;
     fileName?: string;
     preview?: string;
+    url?: string;
   }>;
 };
 

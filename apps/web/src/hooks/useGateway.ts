@@ -8,6 +8,7 @@ import type {
   ModelState,
   SessionEntry,
 } from "@/types/gateway";
+import type { AttachmentReference } from "@/types/upload";
 import { appendAuthQuery } from "@/lib/auth";
 
 export type GatewayStatus = "connecting" | "connected" | "disconnected";
@@ -98,22 +99,45 @@ export const useGateway = () => {
   }, [sendRequest]);
 
   const sendPrompt = useCallback(
-    (text: string) => {
-      if (!text.trim()) return;
+    (text: string, attachments?: AttachmentReference[]) => {
+      if (!text.trim() && (!attachments || attachments.length === 0)) return;
       localPromptQueue.current.push(text);
+
+      const hasAttachments = attachments && attachments.length > 0;
+
       setState((prev) => ({
         ...prev,
         draft: "",
         messages: [
           ...prev.messages,
           {
-            role: "user",
+            role: hasAttachments ? "user-with-attachments" : "user",
             content: [{ type: "text", text }],
             timestamp: Date.now(),
+            attachments: hasAttachments
+              ? attachments.map((att) => ({
+                  mimeType: att.mimeType,
+                  fileName: att.fileName,
+                }))
+              : undefined,
           },
         ],
       }));
-      send({ type: "prompt", message: text });
+
+      if (hasAttachments) {
+        send({
+          type: "prompt_with_attachments",
+          message: text,
+          attachments: attachments.map((att) => ({
+            fileId: att.fileId,
+            fileName: att.fileName,
+            mimeType: att.mimeType,
+            size: att.size,
+          })),
+        });
+      } else {
+        send({ type: "prompt", message: text });
+      }
     },
     [send],
   );

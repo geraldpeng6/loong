@@ -1,15 +1,98 @@
+import type { IncomingMessage, Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
+import type { AttachmentReference, FileStorageService } from "../../core/files/types.js";
 
-const normalizeContext = (context, fallbackAgentId) => {
+type AgentRuntime = {
+  id: string;
+  name?: string;
+  keywords?: string[];
+  busy?: boolean;
+  queue?: Array<unknown>;
+  sessionCache?: unknown;
+  currentSessionFile?: string | null;
+};
+
+type GatewayCommand = { type: string; remainder: string };
+
+type GatewayRuntime = {
+  getAgent?: (id: string) => AgentRuntime | null;
+  resolveAgentFromText?: (
+    text: string,
+    currentAgentId?: string | null,
+  ) => { agent: AgentRuntime | null; remainder: string; switched: boolean };
+  resolveCommand?: (text: string) => GatewayCommand | null;
+  handleGatewayCommand?: (params: {
+    agent: AgentRuntime;
+    command: GatewayCommand;
+    respond: (text: string) => void;
+    sendPrompt: (text: string) => void;
+    contextKey: string | null;
+  }) => Promise<boolean>;
+  enqueueAgentPrompt?: (
+    agent: AgentRuntime,
+    task: {
+      source: string;
+      ws?: WebSocket;
+      text: string;
+      attachments?: AttachmentReference[];
+    },
+  ) => void;
+  sendAgentRequest?: (agent: AgentRuntime, payload: Record<string, unknown>) => Promise<unknown>;
+  getSessionEntries?: (agent: AgentRuntime) => unknown[];
+  renameSessionFile?: (
+    agent: AgentRuntime,
+    sessionPath: string,
+    label: string,
+  ) => Promise<
+    | {
+        ok: true;
+        sessionPath: string;
+        sessionId: string;
+        label: string;
+        renamed: boolean;
+      }
+    | { ok: false; error: string }
+  >;
+  deleteSessionFile?: (
+    agent: AgentRuntime,
+    sessionPath: string,
+  ) => { ok: true; sessionPath: string; sessionId: string } | { ok: false; error: string };
+  sendToAgent?: (agent: AgentRuntime, payload: Record<string, unknown>) => void;
+};
+
+type ClientContext = { agentId: string | null };
+
+const normalizeContext = (context: ClientContext | undefined, fallbackAgentId: string | null) => {
   if (!context || !context.agentId) return { agentId: fallbackAgentId };
   return context;
 };
 
-const sendToClient = (client, payload, { raw = false } = {}) => {
+const sendToClient = (
+  client: WebSocket,
+  payload: unknown,
+  { raw = false }: { raw?: boolean } = {},
+) => {
   if (!client || client.readyState !== WebSocket.OPEN) return false;
-  client.send(raw ? payload : JSON.stringify(payload));
+  client.send(raw ? (payload as string) : JSON.stringify(payload));
   return true;
 };
+
+export interface CreateWebChannelOptions {
+  server: Server;
+  path?: string;
+  passwordRequired?: boolean;
+  isAuthorizedRequest?: (req: IncomingMessage) => boolean;
+  wsHeartbeatMs?: number;
+  agentList?: AgentRuntime[];
+  defaultAgentId?: string | null;
+  loongState?: string;
+  loongWorkspaces?: string;
+  loongSessions?: string;
+  loongRuntime?: string;
+  gateway?: GatewayRuntime;
+  fileStorage?: FileStorageService | null;
+  publicBaseUrl?: string;
+}
 
 export const createWebChannel = ({
   server,
@@ -24,7 +107,9 @@ export const createWebChannel = ({
   loongSessions,
   loongRuntime,
   gateway = {},
-}) => {
+  fileStorage = null,
+  publicBaseUrl = "",
+}: CreateWebChannelOptions) => {
   const {
     getAgent,
     resolveAgentFromText,
@@ -37,8 +122,8 @@ export const createWebChannel = ({
     deleteSessionFile,
     sendToAgent,
   } = gateway;
-  const clients = new Set();
-  const contexts = new Map();
+  const clients = new Set<WebSocket>();
+  const contexts = new Map<WebSocket, ClientContext>();
 
   const broadcastToAgent = (agentId, payload, { raw = false } = {}) => {
     let sent = 0;
@@ -223,6 +308,81 @@ export const createWebChannel = ({
         return;
       }
 
+      // Handle prompt with attachments (new format)
+      if (payload.type === "prompt_with_attachments" && typeof payload.message === "string") {
+        const resolved = resolveAgentFromText
+          ? resolveAgentFromText(payload.message, context.agentId)
+          : { agent: currentAgent, remainder: payload.message, switched: false };
+        const { agent, remainder, switched } = resolved;
+
+        if (!agent) {
+          sendToClient(ws, { type: "error", error: "No agent available" });
+          return;
+        }
+
+        if (switched) {
+          contexts.set(ws, { agentId: agent.id });
+          sendToClient(ws, {
+            type: "gateway_agent_switched",
+            agent: { id: agent.id, name: agent.name, keywords: agent.keywords },
+          });
+        }
+
+        const trimmed = remainder.trim();
+        if (!trimmed && (!Array.isArray(payload.attachments) || payload.attachments.length === 0)) {
+          sendGatewayMessage(ws, `已切换到 ${agent.name}`);
+          return;
+        }
+
+        // Validate attachments
+        const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
+        const validatedAttachments = [];
+        for (const att of attachments) {
+          if (att?.fileId) {
+            // Verify file exists
+            const metadata = fileStorage ? await fileStorage.getMetadata(att.fileId) : null;
+            if (metadata) {
+              validatedAttachments.push({
+                fileId: att.fileId,
+                fileName: att.fileName || metadata.fileName,
+                mimeType: att.mimeType || metadata.mimeType,
+                size: metadata.size,
+                url: `${publicBaseUrl}/api/files/${att.fileId}`,
+              });
+            }
+          }
+        }
+
+        const command = resolveCommand?.(trimmed);
+        const handled = command
+          ? await handleGatewayCommand?.({
+              agent,
+              command,
+              respond: (replyText) => sendGatewayMessage(ws, replyText),
+              sendPrompt: (promptText) =>
+                enqueueAgentPrompt?.(agent, {
+                  source: "web",
+                  ws,
+                  text: promptText,
+                  attachments: validatedAttachments,
+                }),
+              contextKey: null,
+            })
+          : false;
+        if (handled) {
+          return;
+        }
+
+        enqueueAgentPrompt?.(agent, {
+          source: "web",
+          ws,
+          text: trimmed,
+          attachments: validatedAttachments,
+        });
+        return;
+      }
+
+      // Handle plain text prompt (backward compatible)
       if (payload.type === "prompt" && typeof payload.message === "string") {
         const resolved = resolveAgentFromText
           ? resolveAgentFromText(payload.message, context.agentId)

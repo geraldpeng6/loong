@@ -15,7 +15,7 @@
     "setup:skills": "node scripts/bootstrap-skills.js",
     "create:agent": "node scripts/create-agent.js",
     "create:skill": "node scripts/create-skill.js",
-    "check:pi": "which pi || (echo 'Error: pi is not installed. Run: npm install -g @mariozechner/pi-coding-agent' && exit 1)",
+    "check:pi": "node scripts/check-pi.js",
     "lint": "eslint . --max-warnings=0",
     "lint:fix": "eslint . --fix --max-warnings=0",
     "format": "prettier --write .",

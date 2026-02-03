@@ -7,7 +7,8 @@ import RefreshIcon from "@/components/ui/refresh-icon";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import type { GatewayStatus, SessionEntry } from "@/types/gateway";
+import type { SessionEntry } from "@/types/gateway";
+import type { GatewayStatus } from "@/hooks/useGateway";
 import SessionList from "@/components/sidebar/SessionList";
 import { cn } from "@/lib/utils";
 

@@ -14,7 +14,7 @@ Minimal WebSocket gateway that proxies to `pi --mode rpc`.
 ## Requirements
 
 - Node.js >= 20
-- `pi` installed globally (`npm install -g @mariozechner/pi-coding-agent`)
+- `@mariozechner/pi-coding-agent` available (installed locally via `pnpm install`; global install optional)
 
 ## Install
 
@@ -26,7 +26,7 @@ pnpm install
 ## Run
 
 ```bash
-# optional overrides
+# optional overrides (PI_CMD defaults to local node_modules/.bin/pi when available)
 export PORT=17800
 export PI_CMD=pi
 export PI_CWD=/Users/jiale/code/loong
@@ -45,6 +45,12 @@ export IMG_PIPELINE_DIR=/Users/jiale/temp-workspaces/lucy2workspace/img-pipeline
 # export IMG_PIPELINE_MAX_TOP=20
 # export IMG_PIPELINE_MAX_BYTES=$((5*1024*1024))
 # export IMG_PIPELINE_MAX_TOTAL_BYTES=$((20*1024*1024))
+
+# file upload configuration (optional)
+export LOONG_UPLOAD_DIR=/Users/jiale/.loong/uploads
+export LOONG_UPLOAD_MAX_SIZE=$((10*1024*1024))  # 10MB default
+export LOONG_UPLOAD_ALLOWED_TYPES="image/,audio/,video/,application/pdf,text/"
+export LOONG_UPLOAD_ALLOW_UNKNOWN=true
 
 pnpm start
 ```
@@ -260,6 +266,63 @@ Notes:
 ### POST /api/ask
 
 Send a prompt to the current agent and return its reply.
+
+### POST /api/upload
+
+Upload files (multipart/form-data). Returns file metadata with `fileId` for use with WebSocket `prompt_with_attachments`.
+
+```bash
+curl -F "file=@image.png" -F "source=web" http://localhost:17800/api/upload
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "file": {
+    "fileId": "abc123",
+    "fileName": "image.png",
+    "mimeType": "image/png",
+    "size": 12345,
+    "url": "http://localhost:17800/api/files/abc123",
+    "uploadedAt": "2024-01-15T10:30:00Z"
+  }
+}
+```
+
+### GET /api/files/:fileId
+
+Download or view an uploaded file.
+
+- Add `?download=true` to force download.
+- Files are served with appropriate `Content-Type` headers.
+
+### DELETE /api/files/:fileId
+
+Delete an uploaded file.
+
+### WebSocket: prompt_with_attachments
+
+Send a message with file attachments:
+
+```json
+{
+  "type": "prompt_with_attachments",
+  "message": "Analyze these images",
+  "attachments": [
+    {
+      "fileId": "abc123",
+      "fileName": "chart.png",
+      "mimeType": "image/png",
+      "size": 12345,
+      "url": "http://localhost:17800/api/files/abc123"
+    }
+  ]
+}
+```
+
+The agent will receive the message with attachments embedded as base64 content.
 
 ## Example WebSocket command
 

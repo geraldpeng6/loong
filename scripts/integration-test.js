@@ -1,21 +1,38 @@
 #!/usr/bin/env node
 import { spawn, execSync } from "child_process";
 import { createInterface } from "readline";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "fs";
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import assert from "assert/strict";
 import net from "net";
 import WebSocket from "ws";
 
-// Check if pi is installed
-try {
-  execSync("which pi", { stdio: "ignore" });
-} catch {
+const ROOT = process.cwd();
+const PI_BIN = process.platform === "win32" ? "pi.cmd" : "pi";
+const localPiCandidates = [
+  join(ROOT, "node_modules", ".bin", PI_BIN),
+  join(ROOT, "apps", "server", "node_modules", ".bin", PI_BIN),
+];
+const localPi = localPiCandidates.find((candidate) => existsSync(candidate));
+
+const hasGlobalPi = () => {
+  try {
+    const whichCmd = process.platform === "win32" ? "where" : "which";
+    execSync(`${whichCmd} pi`, { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+if (!localPi && !hasGlobalPi()) {
   console.log("[test] Skipping: pi is not installed");
-  console.log("[test] Install: npm install -g @mariozechner/pi-coding-agent");
+  console.log("[test] Install: pnpm install (local) or pnpm add -g @mariozechner/pi-coding-agent");
   process.exit(0);
 }
+
+const PI_CMD = localPi || "pi";
 
 const getFreePort = () =>
   new Promise((resolve, reject) => {
@@ -32,7 +49,6 @@ const getFreePort = () =>
     });
   });
 
-const ROOT = process.cwd();
 const TEMP_ROOT = mkdtempSync(join(tmpdir(), "loong-it-"));
 const HOME_DIR = join(TEMP_ROOT, "home");
 const STATE_DIR = join(TEMP_ROOT, "state");
@@ -62,7 +78,7 @@ writeFileSync(
 const serverEnv = {
   ...process.env,
   PORT: String(PORT),
-  PI_CMD: "pi",
+  PI_CMD,
   HOME: HOME_DIR,
   LOONG_STATE_DIR: STATE_DIR,
   LOONG_CONFIG_PATH: join(STATE_DIR, "config.json"),

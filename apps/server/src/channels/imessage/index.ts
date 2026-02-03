@@ -2,6 +2,80 @@ import { mkdirSync } from "fs";
 import { startIMessageBridge } from "../../imessage.js";
 import { createIMessageOutbound } from "./outbound.js";
 import { createIMessageInbound } from "./inbound.js";
+import type { AttachmentReference, FileStorageService } from "../../core/files/types.js";
+
+type AgentRuntime = {
+  id: string;
+  name?: string;
+  notifyOnStart?: boolean;
+  replyPrefixMode?: string;
+};
+
+type GatewayCommand = { type: string; remainder: string };
+
+type GatewayRuntime = {
+  resolveAgentFromText?: (
+    text: string,
+    currentAgentId: string,
+  ) => {
+    agent: AgentRuntime | null;
+    remainder: string;
+    switched: boolean;
+  } | null;
+  resolveCommand?: (text: string) => GatewayCommand | null;
+  handleGatewayCommand?: (params: {
+    agent: AgentRuntime;
+    command: GatewayCommand;
+    respond: (replyText: string) => void;
+    sendPrompt: (promptText: string) => void;
+    contextKey: string;
+  }) => Promise<boolean>;
+  enqueueAgentPrompt?: (
+    agent: AgentRuntime,
+    task: {
+      source: string;
+      text: string;
+      sender?: string;
+      chatId?: number;
+      attachments?: AttachmentReference[];
+      onStart?: () => void | Promise<void>;
+    },
+  ) => void;
+};
+
+type IMessageBridge = {
+  subscribe: (params: { attachments?: boolean }) => Promise<void>;
+  sendMessage: (params: {
+    text?: string;
+    file?: string;
+    chatId?: number;
+    to?: string;
+    service?: string;
+    region?: string;
+  }) => Promise<void>;
+  stop: () => Promise<void>;
+};
+
+export interface CreateIMessageChannelOptions {
+  enabled?: boolean;
+  cliPath?: string;
+  dbPath?: string;
+  attachments?: boolean;
+  service?: string;
+  region?: string;
+  allowlist?: string[];
+  outboundDir?: string;
+  defaultAgentId?: string;
+  isSlashCommandText?: (text: string) => boolean;
+  resolveAgentLabel?: (agent: AgentRuntime) => string;
+  formatAgentReply?: (agent: AgentRuntime, text: string) => string;
+  extractAssistantText?: (messages: unknown[]) => string;
+  resolveContextKey?: (params: { chatId?: number; sender?: string }) => string;
+  gateway?: GatewayRuntime;
+  logger?: Console;
+  fileStorage?: FileStorageService | null;
+  publicBaseUrl?: string;
+}
 
 export const createIMessageChannel = ({
   enabled = false,
@@ -20,11 +94,13 @@ export const createIMessageChannel = ({
   resolveContextKey,
   gateway = {},
   logger = console,
-} = {}) => {
+  fileStorage = null,
+  publicBaseUrl = "",
+}: CreateIMessageChannelOptions = {}) => {
   const { resolveAgentFromText, resolveCommand, handleGatewayCommand, enqueueAgentPrompt } =
     gateway;
 
-  let bridge = null;
+  let bridge: IMessageBridge | null = null;
 
   const ensureOutboundDir = () => {
     if (!outboundDir) return;
@@ -56,6 +132,8 @@ export const createIMessageChannel = ({
     resolveAgentLabel,
     isSlashCommandText,
     logger,
+    fileStorage,
+    publicBaseUrl,
   });
 
   const start = async () => {

@@ -6,6 +6,7 @@ export type AttachmentItem = {
   data: string | null;
   fileName: string;
   preview?: string | null;
+  url?: string | null;
 };
 
 export const extractText = (content: GatewayMessage["content"]) => {
@@ -42,6 +43,7 @@ export const extractAttachments = (message: GatewayMessage): AttachmentItem[] =>
         data: attachment.content,
         fileName: attachment.fileName || "attachment",
         preview: attachment.preview || null,
+        url: attachment.url || null,
       });
     }
   }

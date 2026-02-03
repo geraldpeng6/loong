@@ -42,11 +42,24 @@ import { createAgentResponseHandler } from "./core/gateway/agent-response.js";
 import { createAgentEventHandler } from "./core/gateway/agent-events.js";
 import { createNotificationHelpers } from "./core/gateway/notifications.js";
 import { createAgentUiHandlers } from "./core/gateway/agent-ui.js";
+import { createFileStorage } from "./core/files/storage.js";
+import type { FileUploadConfig } from "./core/files/types.js";
+import { DEFAULT_MAX_FILE_SIZE, DEFAULT_ALLOWED_MIME_TYPES } from "./core/files/types.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const PORT = Number(process.env.PORT || 17800);
-const PI_CMD = process.env.PI_CMD || "pi";
+
+const resolveLocalPiCmd = () => {
+  const binName = process.platform === "win32" ? "pi.cmd" : "pi";
+  const candidates = [
+    join(__dirname, "..", "node_modules", ".bin", binName),
+    join(__dirname, "..", "..", "..", "node_modules", ".bin", binName),
+  ];
+  return candidates.find((candidate) => existsSync(candidate)) || null;
+};
+
+const PI_CMD = process.env.PI_CMD || resolveLocalPiCmd() || "pi";
 const PI_CWD = process.env.PI_CWD || resolve(__dirname, "..", "..");
 const LOONG_STATE_DIR = process.env.LOONG_STATE_DIR || join(homedir(), ".loong");
 const LOONG_WORKSPACES_DIR = join(LOONG_STATE_DIR, "workspaces");
@@ -87,6 +100,17 @@ const IMG_PIPELINE_MAX_TOP = Number(process.env.IMG_PIPELINE_MAX_TOP || 20);
 const IMG_PIPELINE_MAX_BYTES = Number(process.env.IMG_PIPELINE_MAX_BYTES || 5 * 1024 * 1024);
 const IMG_PIPELINE_MAX_TOTAL_BYTES = Number(
   process.env.IMG_PIPELINE_MAX_TOTAL_BYTES || 20 * 1024 * 1024,
+);
+
+// File upload configuration
+const LOONG_UPLOAD_DIR = process.env.LOONG_UPLOAD_DIR || join(LOONG_RUNTIME_DIR, "uploads");
+const LOONG_UPLOAD_MAX_SIZE = Number(process.env.LOONG_UPLOAD_MAX_SIZE || DEFAULT_MAX_FILE_SIZE);
+const LOONG_UPLOAD_ALLOWED_TYPES = (process.env.LOONG_UPLOAD_ALLOWED_TYPES || "")
+  .split(",")
+  .map((t) => t.trim())
+  .filter(Boolean);
+const LOONG_UPLOAD_ALLOW_UNKNOWN = !["0", "false", "no"].includes(
+  String(process.env.LOONG_UPLOAD_ALLOW_UNKNOWN || "true").toLowerCase(),
 );
 
 const IMESSAGE_ENABLED_ENV = ["1", "true", "yes"].includes(
@@ -239,6 +263,21 @@ const modelsConfigStore = createModelsConfigStore({
 });
 const { read: readModelsConfig, write: writeModelsConfig } = modelsConfigStore;
 
+// Initialize file storage service
+const fileUploadConfig: FileUploadConfig = {
+  uploadDir: LOONG_UPLOAD_DIR,
+  maxFileSize: LOONG_UPLOAD_MAX_SIZE,
+  allowedMimeTypes:
+    LOONG_UPLOAD_ALLOWED_TYPES.length > 0 ? LOONG_UPLOAD_ALLOWED_TYPES : DEFAULT_ALLOWED_MIME_TYPES,
+  allowUnknownTypes: LOONG_UPLOAD_ALLOW_UNKNOWN,
+  publicBaseUrl: `http://localhost:${PORT}`,
+};
+
+const fileStorage = createFileStorage({
+  config: fileUploadConfig,
+  logger: console,
+});
+
 const server = createServer(
   createHttpRouter({
     parseRequestUrl,
@@ -271,6 +310,9 @@ const server = createServer(
     buildDirectReplyContext: (task) => buildDirectReplyContext(task),
     randomUUID,
     loongSubagentMaxDepth: LOONG_SUBAGENT_MAX_DEPTH,
+    fileStorage,
+    fileUploadConfig,
+    passwordRequired: PASSWORD_REQUIRED,
   }),
 );
 
@@ -410,6 +452,7 @@ const taskRunner = createTaskRunner({
   broadcastAgentStatus: broadcastAgentStatusAdapter,
   subagentRuns,
   persistSubagentRuns,
+  fileStorage,
 });
 
 const {
@@ -512,6 +555,8 @@ imessageChannel = createIMessageChannel({
   resolveContextKey: resolveIMessageKey,
   gateway: gatewayRuntime,
   logger: console,
+  fileStorage,
+  publicBaseUrl: fileUploadConfig.publicBaseUrl,
 });
 
 webChannel = createWebChannel({
@@ -527,6 +572,8 @@ webChannel = createWebChannel({
   loongSessions: LOONG_SESSIONS_DIR,
   loongRuntime: LOONG_RUNTIME_DIR,
   gateway: gatewayRuntime,
+  fileStorage,
+  publicBaseUrl: fileUploadConfig.publicBaseUrl,
 });
 
 const gatewaySender = createGatewaySender(webChannel);

@@ -5,6 +5,8 @@ import type { GatewayMessage } from "@/types/gateway";
 import { cn } from "@/lib/utils";
 import Markdown from "@/components/chat/Markdown";
 import { extractAttachments, extractText } from "@/components/chat/messageUtils";
+import { Image, FileAudio, FileVideo, FileText, Download, ExternalLink } from "lucide-react";
+import { getFileKind } from "@/types/upload";
 
 export type MessageItemProps = {
   message: GatewayMessage;
@@ -66,20 +68,49 @@ const MessageItem = ({ message, forkEntryId, onFork }: MessageItemProps) => {
                 ? `data:image/png;base64,${attachment.preview}`
                 : null;
 
-              if (attachment.kind === "image" && (dataUrl || previewUrl)) {
+              // 优先使用服务器 URL（如果有）
+              const serverUrl = attachment.url || null;
+              const displayUrl = serverUrl || dataUrl || previewUrl;
+
+              if (attachment.kind === "image" && (displayUrl || previewUrl)) {
                 return (
-                  <button
+                  <div
                     key={`${attachment.fileName}-${index}`}
-                    type="button"
-                    className="overflow-hidden rounded-xl border bg-background"
-                    onClick={() => dataUrl && window.open(dataUrl, "_blank")}
+                    className="group relative overflow-hidden rounded-xl border bg-background"
                   >
                     <img
-                      src={previewUrl || dataUrl || ""}
+                      src={previewUrl || displayUrl || ""}
                       alt={attachment.fileName}
                       className="h-32 w-48 object-cover"
                     />
-                  </button>
+                    <div className="absolute inset-0 flex items-center justify-center gap-2 bg-black/50 opacity-0 transition-opacity group-hover:opacity-100">
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-8 w-8 text-white hover:bg-white/20"
+                        onClick={() => displayUrl && window.open(displayUrl, "_blank")}
+                        title="Open in new tab"
+                      >
+                        <ExternalLink size={16} />
+                      </Button>
+                      {displayUrl && (
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8 text-white hover:bg-white/20"
+                          onClick={() => {
+                            const a = document.createElement("a");
+                            a.href = displayUrl;
+                            a.download = attachment.fileName;
+                            a.click();
+                          }}
+                          title="Download"
+                        >
+                          <Download size={16} />
+                        </Button>
+                      )}
+                    </div>
+                  </div>
                 );
               }
 
@@ -87,9 +118,13 @@ const MessageItem = ({ message, forkEntryId, onFork }: MessageItemProps) => {
                 return (
                   <div
                     key={`${attachment.fileName}-${index}`}
-                    className="rounded-xl border bg-background p-2"
+                    className="flex min-w-[200px] items-center gap-3 rounded-xl border bg-background p-3"
                   >
-                    <audio controls src={dataUrl || undefined} />
+                    <FileAudio size={24} className="text-purple-500" />
+                    <div className="flex-1 min-w-0">
+                      <p className="truncate text-sm font-medium">{attachment.fileName}</p>
+                      <audio controls className="w-full h-8 mt-1" src={displayUrl || undefined} />
+                    </div>
                   </div>
                 );
               }
@@ -100,19 +135,44 @@ const MessageItem = ({ message, forkEntryId, onFork }: MessageItemProps) => {
                     key={`${attachment.fileName}-${index}`}
                     className="rounded-xl border bg-background p-2"
                   >
-                    <video controls className="h-32 w-48" src={dataUrl || undefined} />
+                    <video
+                      controls
+                      className="h-32 w-48 rounded-lg"
+                      src={displayUrl || undefined}
+                    />
+                    <p className="mt-1 truncate px-1 text-xs text-muted-foreground">
+                      {attachment.fileName}
+                    </p>
                   </div>
                 );
               }
 
+              // Document or other files
+              const fileKind = getFileKind(attachment.mimeType);
+              const Icon =
+                fileKind === "document"
+                  ? FileText
+                  : fileKind === "audio"
+                    ? FileAudio
+                    : fileKind === "video"
+                      ? FileVideo
+                      : fileKind === "image"
+                        ? Image
+                        : FileText;
+
               return (
                 <a
                   key={`${attachment.fileName}-${index}`}
-                  href={dataUrl || "#"}
+                  href={displayUrl || "#"}
                   download={attachment.fileName}
-                  className="rounded-xl border bg-background px-3 py-2 text-xs underline"
+                  className="flex min-w-[180px] max-w-[280px] items-center gap-3 rounded-xl border bg-background px-3 py-2 transition-colors hover:bg-muted"
                 >
-                  {attachment.fileName}
+                  <Icon size={20} className="shrink-0 text-muted-foreground" />
+                  <div className="flex-1 min-w-0">
+                    <p className="truncate text-sm font-medium">{attachment.fileName}</p>
+                    <p className="text-[10px] text-muted-foreground">{attachment.mimeType}</p>
+                  </div>
+                  <Download size={14} className="shrink-0 text-muted-foreground" />
                 </a>
               );
             })}
