@@ -3,6 +3,7 @@
 Minimal WebSocket gateway that proxies to `pi --mode rpc`.
 
 ## Features
+
 - Multi-agent support (one `pi --mode rpc` process per agent)
 - Keyword-based agent routing (e.g. "Jarvis ...", "Gump ...")
 - Independent sessions + memory per agent
@@ -11,22 +12,25 @@ Minimal WebSocket gateway that proxies to `pi --mode rpc`.
 - Web UI renders images/audio/video/files when present in messages
 
 ## Requirements
+
 - Node.js >= 20
 - `pi` installed globally (`npm install -g @mariozechner/pi-coding-agent`)
 
 ## Install
+
 ```bash
 cd /Users/jiale/code/loong
 pnpm install
 ```
 
 ## Run
+
 ```bash
 # optional overrides
 export PORT=17800
 export PI_CMD=pi
 export PI_CWD=/Users/jiale/code/loong
-export LOONG_HOME=/Users/jiale/.loong
+export LOONG_STATE_DIR=/Users/jiale/.loong
 export LOONG_CONFIG_PATH=/Users/jiale/.loong/config.json
 export LOONG_PASSWORD=your-password
 export LOONG_NOTIFY_LOCAL_ONLY=1
@@ -45,7 +49,16 @@ export IMG_PIPELINE_DIR=/Users/jiale/temp-workspaces/lucy2workspace/img-pipeline
 pnpm start
 ```
 
+## Development
+
+```bash
+pnpm lint
+pnpm format
+pnpm format:check
+```
+
 ## Authentication (optional)
+
 If `LOONG_PASSWORD` is set, all HTTP + WebSocket endpoints require a password.
 
 - Browser: the Web UI will show a Basic Auth prompt. Use any username and the password from `LOONG_PASSWORD`.
@@ -70,6 +83,40 @@ Gateway config file (default: `~/.loong/config.json`):
 Loong loads agents from `~/.pi/agent/agents/*.md` using the same frontmatter format as pi subagent
 definitions. Loong does **not** read `~/.loong/agents` anymore.
 
+Quick setup (copy built-in templates, including `main` + `nuwa` + `cangjie` + `taotie` + `wugang`):
+
+```bash
+pnpm setup:agents
+```
+
+Agent/skill scaffolding scripts:
+
+```bash
+# Create a new agent + workspace scaffold
+pnpm create:agent -- \
+  --id bubugao \
+  --name-zh 步步高 \
+  --name-en Bubugao \
+  --description "Math tutor" \
+  --tools "read, write, edit, bash"
+
+# Create a new skill scaffold
+pnpm create:skill -- \
+  --name pdf-tools \
+  --description "Work with PDFs (extract, merge, fill)."
+```
+
+`nuwa` (女娲) is the built-in builder agent that uses these scripts/templates.
+`cangjie` (仓颉) is the built-in document/presentation agent (pptx/pdf/docx/xlsx).
+`taotie` (饕餮) is the built-in web research/data agent (web-search/rss/webapp-testing/xlsx).
+`wugang` (吴刚) is the built-in scheduler agent that dispatches periodic tasks.
+
+Skill templates live under `templates/skills/<skill>/SKILL.md` and can be synced with:
+
+```bash
+pnpm setup:skills
+```
+
 ```markdown
 ---
 name: reviewer
@@ -79,18 +126,22 @@ model: openai-codex/gpt-5.2-codex
 thinkingLevel: medium
 noSkills: true
 skills:
-  - ~/.pi/skills/review
+  - ~/.pi/agent/skills/review
 ---
+
 You are a seasoned code reviewer.
 ```
 
 Notes:
+
 - `name` is the agent id used for routing.
 - `skills`/`noSkills` are optional; when set, Loong passes `--skill`/`--no-skills` to the pi process.
-- Memory files are stored under `~/.loong/pi-agents/<name>/memory` with index `MEMORY.md`.
-- Session history is stored under `~/loongspace/<name>` (or `LOONG_SPACE`).
+- Workspaces live under `~/.loong/workspaces/<name>` (AGENTS.md, SOUL.md, MEMORY.md).
+- Memory files are stored under `~/.loong/workspaces/<name>/memory` with index `MEMORY.md`.
+- Session history is stored under `~/.loong/sessions/<name>/transcripts` with index `sessions.json`.
 
 ## iMessage (optional)
+
 Requires macOS + Messages signed in + `imsg` CLI.
 
 ```bash
@@ -120,11 +171,12 @@ pnpm start
 If iMessage doesn't start, ensure the terminal has permission to access `~/Library/Messages/chat.db` (Full Disk Access on macOS).
 
 Notes:
+
 - If `IMESSAGE_DB_PATH` is not set, defaults to `~/Library/Messages/chat.db`.
 - Auto-enable: `LOONG_IMESSAGE_AUTO=1` (default) turns iMessage on when the DB exists. Disable with `IMESSAGE_ENABLED=0` or `LOONG_IMESSAGE_AUTO=0`.
 - Session mode: `IMESSAGE_SESSION_MODE=shared` (one shared session) or `per-chat` (map per chat).
-- Mapping file (per-chat mode only): `~/.loong/pi-agents/<id>/imessage-session-map.json` (per agent).
-- Outbound media files are written to `IMESSAGE_OUTBOUND_DIR` (default: `~/.loong/imessage-outbound`).
+- Mapping file (per-chat mode only): `~/.loong/runtime/channels/imessage/session-map/<id>.json` (per agent).
+- Outbound media files are written to `IMESSAGE_OUTBOUND_DIR` (default: `~/.loong/runtime/outbound/imessage`).
 - Replies are sent back to the same `chat_id` (if present) or sender handle.
 - Keyword routing (prefix at start only):
   - `Jarvis 帮我写个脚本` → route to Jarvis agent
@@ -134,6 +186,7 @@ Notes:
 - Avoid using the Web UI concurrently if you need strict routing.
 
 ## Endpoints
+
 - Web UI: `http://localhost:17800/`
 - HTTP health: `GET http://localhost:17800/health`
 - WebSocket: `ws://localhost:17800/ws`
@@ -143,7 +196,9 @@ Notes:
   - `POST http://localhost:17800/api/ask`
 
 ### POST /api/notify
+
 Local-only by default (`LOONG_NOTIFY_LOCAL_ONLY=0` to allow remote). JSON body:
+
 ```json
 {
   "text": "hello",
@@ -152,11 +207,13 @@ Local-only by default (`LOONG_NOTIFY_LOCAL_ONLY=0` to allow remote). JSON body:
   "prefix": true
 }
 ```
+
 - `scope`: `agent` (only clients on that agent) or `all` (broadcast).
 - `prefix`: default `true` when `agentId` is provided.
 - Request body limit via `LOONG_MAX_BODY_BYTES`.
 
 ### POST /api/pipeline/query-media
+
 Run img-pipeline semantic search and return media contents.
 
 ```json
@@ -174,6 +231,7 @@ Run img-pipeline semantic search and return media contents.
 ```
 
 Response:
+
 ```json
 {
   "success": true,
@@ -194,25 +252,31 @@ Response:
 ```
 
 Notes:
+
 - Requires `IMG_PIPELINE_DIR` or `IMG_PIPELINE_QUERY_CMD`.
 - Limits are enforced by `IMG_PIPELINE_MAX_TOP/IMG_PIPELINE_MAX_BYTES/IMG_PIPELINE_MAX_TOTAL_BYTES`.
 - `allowedMimeTypes` supports prefixes (e.g., `image/`, `audio/`).
 
 ### POST /api/ask
+
 Send a prompt to the current agent and return its reply.
 
 ## Example WebSocket command
+
 Send JSON (one object per message):
+
 ```json
-{"type":"prompt","message":"Hello"}
+{ "type": "prompt", "message": "Hello" }
 ```
 
 ### Session switching
+
 ```json
-{"type":"new_session"}
+{ "type": "new_session" }
 ```
+
 ```json
-{"type":"switch_session","sessionPath":"/path/to/session.jsonl"}
+{ "type": "switch_session", "sessionPath": "/path/to/session.jsonl" }
 ```
 
 The gateway just forwards messages; all RPC commands are supported (see `docs/rpc.md`).

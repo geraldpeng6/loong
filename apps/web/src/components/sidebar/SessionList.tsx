@@ -1,0 +1,132 @@
+import { useEffect, useState } from "react";
+
+import PenIcon from "@/components/ui/pen-icon";
+import TrashIcon from "@/components/ui/trash-icon";
+
+import { Button } from "@/components/ui/button";
+import type { SessionEntry } from "@/types/gateway";
+import { cn } from "@/lib/utils";
+
+export type SessionListProps = {
+  sessions: SessionEntry[];
+  currentSessionPath: string | null;
+  onSwitch: (sessionPath: string) => void;
+  onRename: (session: SessionEntry, label: string) => void;
+  onDelete: (session: SessionEntry) => void;
+};
+
+const SessionList = ({
+  sessions,
+  currentSessionPath,
+  onSwitch,
+  onRename,
+  onDelete,
+}: SessionListProps) => {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingValue, setEditingValue] = useState("");
+
+  useEffect(() => {
+    if (!editingId) return;
+    const session = sessions.find((entry) => entry.id === editingId);
+    if (!session) {
+      setEditingId(null);
+      setEditingValue("");
+      return;
+    }
+    setEditingValue(session.name || session.id);
+  }, [editingId, sessions]);
+
+  const handleCommit = (session: SessionEntry) => {
+    const trimmed = editingValue.trim();
+    setEditingId(null);
+    setEditingValue("");
+    if (!trimmed) return;
+    if (trimmed === (session.name || session.id)) return;
+    onRename(session, trimmed);
+  };
+
+  const handleCancel = () => {
+    setEditingId(null);
+    setEditingValue("");
+  };
+
+  return (
+    <div className="flex flex-col gap-2">
+      {sessions.map((session) => {
+        const isActive = session.isCurrent || session.path === currentSessionPath;
+        const isEditing = editingId === session.id;
+        const sizeTextClass = isActive ? "text-muted/70" : "text-muted-foreground";
+        return (
+          <div
+            key={session.id}
+            className={cn(
+              "flex min-w-0 items-center justify-between gap-2 rounded-lg px-2 py-2 transition-colors",
+              isActive ? "bg-foreground text-background" : "bg-transparent",
+              !isActive && !isEditing && "hover:bg-muted/40",
+              !isEditing && "cursor-pointer",
+            )}
+            onClick={() => {
+              if (isEditing) return;
+              onSwitch(session.path);
+            }}
+          >
+            <div className="flex min-w-0 flex-1 flex-col gap-1 text-left text-xs">
+              {isEditing ? (
+                <input
+                  className={cn(
+                    "min-w-0 w-full rounded-md border border-input bg-background px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-ring",
+                    isActive && "border-background/30",
+                  )}
+                  value={editingValue}
+                  onChange={(event) => setEditingValue(event.target.value)}
+                  onBlur={() => handleCommit(session)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      handleCommit(session);
+                    }
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      handleCancel();
+                    }
+                  }}
+                  autoFocus
+                />
+              ) : (
+                <div className="truncate font-medium">{session.name || session.id}</div>
+              )}
+              <div className={cn("text-[10px]", sizeTextClass)}>{session.sizeText || ""}</div>
+            </div>
+            <div className="flex flex-shrink-0 items-center gap-1">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setEditingId(session.id);
+                }}
+              >
+                <PenIcon size={14} />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 text-destructive"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onDelete(session);
+                }}
+                disabled={isActive}
+              >
+                <TrashIcon size={14} />
+              </Button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+export default SessionList;

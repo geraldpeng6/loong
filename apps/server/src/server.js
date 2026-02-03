@@ -1,0 +1,3278 @@
+import { createServer } from "http";
+import { randomUUID } from "crypto";
+import {
+  mkdirSync,
+  createReadStream,
+  statSync,
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  readdirSync,
+  renameSync,
+  copyFileSync,
+  unlinkSync,
+} from "fs";
+import { dirname, join, extname, resolve, basename, relative, sep } from "path";
+import { fileURLToPath } from "url";
+import { spawn, execSync } from "child_process";
+import { homedir } from "os";
+import { createInterface } from "readline";
+import { WebSocketServer, WebSocket } from "ws";
+import { getModels, getProviders } from "@mariozechner/pi-ai";
+import { startIMessageBridge } from "./imessage.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+const PORT = Number(process.env.PORT || 17800);
+const PI_CMD = process.env.PI_CMD || "pi";
+const PI_CWD = process.env.PI_CWD || resolve(__dirname, "..", "..");
+const LOONG_STATE_DIR = process.env.LOONG_STATE_DIR || join(homedir(), ".loong");
+const LOONG_WORKSPACES_DIR = join(LOONG_STATE_DIR, "workspaces");
+const LOONG_SESSIONS_DIR = join(LOONG_STATE_DIR, "sessions");
+const LOONG_USERS_DIR = join(LOONG_STATE_DIR, "users");
+const LOONG_RUNTIME_DIR = join(LOONG_STATE_DIR, "runtime");
+const LOONG_RUNTIME_CHANNELS_DIR = join(LOONG_RUNTIME_DIR, "channels");
+const LOONG_RUNTIME_OUTBOUND_DIR = join(LOONG_RUNTIME_DIR, "outbound");
+const LOONG_RUNTIME_SUBAGENTS_DIR = join(LOONG_RUNTIME_DIR, "subagents");
+const LOONG_CONFIG_PATH = process.env.LOONG_CONFIG_PATH || join(LOONG_STATE_DIR, "config.json");
+const PI_MODELS_PATH = process.env.PI_MODELS_PATH || join(homedir(), ".pi", "agent", "models.json");
+const LOONG_PASSWORD = process.env.LOONG_PASSWORD || "";
+const PASSWORD_REQUIRED = Boolean(LOONG_PASSWORD);
+const LOONG_DEBUG = ["1", "true", "yes"].includes(
+  String(process.env.LOONG_DEBUG || "").toLowerCase(),
+);
+const WS_HEARTBEAT_MS = Number(process.env.LOONG_WS_HEARTBEAT_MS || 30000);
+const TASK_TIMEOUT_MS = Number(process.env.LOONG_TASK_TIMEOUT_MS || 10 * 60 * 1000);
+const SLASH_COMMAND_TIMEOUT_MS = Number(process.env.LOONG_SLASH_COMMAND_TIMEOUT_MS || 0);
+const SESSION_CACHE_TTL_MS = Number(process.env.LOONG_SESSION_CACHE_TTL_MS || 3000);
+const AGENT_RESTART_MS = Number(process.env.LOONG_AGENT_RESTART_MS || 3000);
+const LOONG_SUBAGENT_MAX_DEPTH = Number(process.env.LOONG_SUBAGENT_MAX_DEPTH || 2);
+const MAX_BODY_BYTES = (() => {
+  const parsed = Number(process.env.LOONG_MAX_BODY_BYTES || 256 * 1024);
+  return Number.isFinite(parsed) ? parsed : 256 * 1024;
+})();
+const NOTIFY_LOCAL_ONLY = !["0", "false", "no"].includes(
+  String(process.env.LOONG_NOTIFY_LOCAL_ONLY || "true").toLowerCase(),
+);
+
+const IMG_PIPELINE_DIR = process.env.IMG_PIPELINE_DIR || "";
+const IMG_PIPELINE_QUERY_CMD =
+  process.env.IMG_PIPELINE_QUERY_CMD ||
+  (IMG_PIPELINE_DIR ? join(IMG_PIPELINE_DIR, "bin", "query-embed") : "");
+const IMG_PIPELINE_DEFAULT_OUTPUT =
+  process.env.IMG_PIPELINE_OUTPUT_DIR || join(homedir(), "output");
+const IMG_PIPELINE_MAX_TOP = Number(process.env.IMG_PIPELINE_MAX_TOP || 20);
+const IMG_PIPELINE_MAX_BYTES = Number(process.env.IMG_PIPELINE_MAX_BYTES || 5 * 1024 * 1024);
+const IMG_PIPELINE_MAX_TOTAL_BYTES = Number(
+  process.env.IMG_PIPELINE_MAX_TOTAL_BYTES || 20 * 1024 * 1024,
+);
+
+const IMESSAGE_ENABLED_ENV = ["1", "true", "yes"].includes(
+  String(process.env.IMESSAGE_ENABLED || "").toLowerCase(),
+);
+const IMESSAGE_DISABLED_ENV = ["0", "false", "no"].includes(
+  String(process.env.IMESSAGE_ENABLED || "").toLowerCase(),
+);
+const IMESSAGE_AUTO = !["0", "false", "no"].includes(
+  String(process.env.LOONG_IMESSAGE_AUTO || "true").toLowerCase(),
+);
+const IMESSAGE_CLI_PATH = process.env.IMESSAGE_CLI_PATH || "imsg";
+const DEFAULT_IMESSAGE_DB_PATH = join(homedir(), "Library", "Messages", "chat.db");
+const IMESSAGE_DB_PATH = process.env.IMESSAGE_DB_PATH || DEFAULT_IMESSAGE_DB_PATH;
+const IMESSAGE_DB_FOUND = existsSync(IMESSAGE_DB_PATH);
+const IMESSAGE_ENABLED = IMESSAGE_DISABLED_ENV
+  ? false
+  : IMESSAGE_ENABLED_ENV || (IMESSAGE_AUTO && IMESSAGE_DB_FOUND);
+const IMESSAGE_SERVICE = process.env.IMESSAGE_SERVICE || "auto";
+const IMESSAGE_REGION = process.env.IMESSAGE_REGION || "US";
+const IMESSAGE_ATTACHMENTS = ["1", "true", "yes"].includes(
+  String(process.env.IMESSAGE_ATTACHMENTS || "").toLowerCase(),
+);
+const IMESSAGE_SESSION_MODE = (process.env.IMESSAGE_SESSION_MODE || "shared").toLowerCase();
+const IMESSAGE_PER_CHAT = IMESSAGE_SESSION_MODE === "per-chat";
+const IMESSAGE_ALLOWLIST = (process.env.IMESSAGE_ALLOWLIST || "")
+  .split(",")
+  .map((entry) => entry.trim())
+  .filter(Boolean);
+const IMESSAGE_OUTBOUND_DIR =
+  process.env.IMESSAGE_OUTBOUND_DIR || join(LOONG_RUNTIME_OUTBOUND_DIR, "imessage");
+
+const DEFAULT_GATEWAY_CONFIG = {
+  defaultAgent: null,
+  notifyOnStart: true,
+  replyPrefixMode: "always",
+  keywordMode: "prefix",
+};
+
+// Check if pi is installed
+const checkPiInstalled = () => {
+  const piCmdParts = PI_CMD.split(/\s+/).filter(Boolean);
+  const piCmd = piCmdParts[0];
+  if (!piCmd) {
+    console.error("[loong] Error: PI_CMD is not set");
+    process.exit(1);
+  }
+  // Check if command exists in PATH
+  try {
+    execSync(`which ${piCmd}`, { stdio: "ignore" });
+  } catch {
+    console.error(`[loong] Error: '${piCmd}' is not installed or not in PATH`);
+    console.error("[loong] Please install pi: npm install -g @mariozechner/pi-coding-agent");
+    process.exit(1);
+  }
+};
+
+checkPiInstalled();
+
+const WORKSPACE_AGENTS_TEMPLATE = `# AGENTS.md - Workspace\n\nThis folder is home.\n\n## Every Session (required)\n1. Read SOUL.md (identity & behavior)\n2. Read MEMORY.md (long-term memory)\n3. If more context is needed, search memory/ for relevant dates/topics\n\n## Memory Workflow\n- memory/YYYY-MM-DD.md = daily logs (raw)\n- MEMORY.md = curated long-term memory\n- When the user says “remember”, write to today’s memory file and summarize into MEMORY.md\n\n## Search Guidance\n- Use rg/read to locate relevant entries in memory/\n- Summarize only what’s needed for the task\n\nKeep it concise, factual, and durable.\n`;
+
+const WORKSPACE_SOUL_TEMPLATE = `# SOUL\n\nDescribe the agent’s identity, tone, and behavioral boundaries here.\n`;
+
+const WORKSPACE_MEMORY_TEMPLATE = `# MEMORY\n\nThis file is your long-term memory. Always read it before working.\n\n## How to use\n- For missing context, search memory/ by keyword or date and pull only relevant parts\n- Record durable facts, preferences, decisions, and constraints\n- Keep sensitive data minimal; store only when explicitly asked\n\n## Index (optional)\n- Add brief pointers to important topics with links to memory/YYYY-MM-DD.md\n`;
+
+const ensureWorkspaceScaffold = ({ workspaceDir, memoryIndexFile, memoryDir }) => {
+  if (!workspaceDir) return;
+  mkdirSync(workspaceDir, { recursive: true });
+  if (memoryDir) {
+    mkdirSync(memoryDir, { recursive: true });
+  }
+  const agentsPath = join(workspaceDir, "AGENTS.md");
+  if (!existsSync(agentsPath)) {
+    writeFileSync(agentsPath, WORKSPACE_AGENTS_TEMPLATE);
+  }
+  const soulPath = join(workspaceDir, "SOUL.md");
+  if (!existsSync(soulPath)) {
+    writeFileSync(soulPath, WORKSPACE_SOUL_TEMPLATE);
+  }
+  if (memoryIndexFile && !existsSync(memoryIndexFile)) {
+    writeFileSync(memoryIndexFile, WORKSPACE_MEMORY_TEMPLATE);
+  }
+};
+
+const parseNamePair = (raw) => {
+  if (!raw || typeof raw !== "string") return { zh: null, en: null };
+  const trimmed = raw.trim();
+  if (!trimmed) return { zh: null, en: null };
+  const match = trimmed.match(/^([^()（）]+)[(（]([^()（）]+)[)）]$/);
+  if (match) {
+    return { zh: match[1].trim() || null, en: match[2].trim() || null };
+  }
+  const isAscii = /^[\x00-\x7F]+$/.test(trimmed);
+  return isAscii ? { zh: null, en: trimmed } : { zh: trimmed, en: null };
+};
+
+const resolveAgentNames = (config, id) => {
+  let nameZh = null;
+  let nameEn = null;
+
+  if (config && typeof config.name === "object" && config.name !== null) {
+    const nameObj = config.name;
+    if (typeof nameObj.zh === "string") nameZh = nameObj.zh.trim() || null;
+    if (typeof nameObj.en === "string") nameEn = nameObj.en.trim() || null;
+  }
+
+  if (typeof config?.name === "string") {
+    const parsed = parseNamePair(config.name);
+    nameZh = nameZh || parsed.zh;
+    nameEn = nameEn || parsed.en;
+  }
+
+  if (!nameZh && !nameEn) {
+    const fallback = parseNamePair(id);
+    nameZh = fallback.zh;
+    nameEn = fallback.en || id;
+  }
+
+  const displayName = nameZh && nameEn ? `${nameZh} (${nameEn})` : nameZh || nameEn || id;
+
+  return { nameZh, nameEn, displayName };
+};
+
+const dedupeKeywords = (values) => {
+  const seen = new Set();
+  const result = [];
+  for (const value of values) {
+    if (!value) continue;
+    const trimmed = String(value).trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    result.push(trimmed);
+  }
+  return result;
+};
+
+const parseFrontmatter = (content) => {
+  if (typeof content !== "string") return { frontmatter: null, body: content || "" };
+  const match = content.match(/^---\s*\n([\s\S]*?)\n---\s*\n?/);
+  if (!match) return { frontmatter: null, body: content };
+  const raw = match[1];
+  const body = content.slice(match[0].length);
+  const frontmatter = {};
+  const lines = raw.split(/\r?\n/);
+  let currentKey = null;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const kv = trimmed.match(/^([A-Za-z0-9_-]+)\s*:\s*(.*)$/);
+    if (kv) {
+      const key = kv[1];
+      let value = kv[2] ?? "";
+      if (value === "") {
+        frontmatter[key] = [];
+        currentKey = key;
+        continue;
+      }
+      value = value.trim();
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1);
+      }
+      frontmatter[key] = value;
+      currentKey = null;
+      continue;
+    }
+    const listMatch = trimmed.match(/^-\s*(.*)$/);
+    if (listMatch && currentKey) {
+      let value = listMatch[1].trim();
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1);
+      }
+      if (!Array.isArray(frontmatter[currentKey])) {
+        frontmatter[currentKey] = [];
+      }
+      frontmatter[currentKey].push(value);
+    }
+  }
+  return { frontmatter, body };
+};
+
+const normalizeStringList = (value) => {
+  if (!value) return null;
+  if (Array.isArray(value)) {
+    const items = value.map((item) => String(item).trim()).filter(Boolean);
+    return items.length > 0 ? items : null;
+  }
+  if (typeof value === "string") {
+    const items = value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    return items.length > 0 ? items : null;
+  }
+  return null;
+};
+
+const normalizeNumber = (value) => {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string" && !value.trim()) return null;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+};
+
+const resolveUserPath = (value, baseDir = homedir()) => {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return baseDir;
+  if (trimmed.startsWith("~")) {
+    const withoutTilde = trimmed.slice(1).replace(/^\/+/, "");
+    return join(homedir(), withoutTilde);
+  }
+  if (trimmed.startsWith("/")) return trimmed;
+  return resolve(baseDir, trimmed);
+};
+
+const INTERNAL_EXTENSIONS_DISABLED = ["1", "true", "yes"].includes(
+  String(process.env.LOONG_DISABLE_INTERNAL_EXTENSIONS || "").toLowerCase(),
+);
+const INTERNAL_EXTENSIONS_ENV = (process.env.LOONG_INTERNAL_EXTENSIONS || "")
+  .split(",")
+  .map((entry) => entry.trim())
+  .filter(Boolean);
+const DEFAULT_INTERNAL_EXTENSIONS = [resolve(__dirname, "..", "extensions", "subagent-spawn.ts")];
+
+const resolveInternalExtensionPaths = () => {
+  if (INTERNAL_EXTENSIONS_DISABLED) return [];
+  if (INTERNAL_EXTENSIONS_ENV.length > 0) {
+    return INTERNAL_EXTENSIONS_ENV.map((entry) => resolveUserPath(entry, __dirname)).filter(
+      (entry) => existsSync(entry),
+    );
+  }
+  return DEFAULT_INTERNAL_EXTENSIONS.filter((entry) => existsSync(entry));
+};
+
+const EXTENSION_MIME_MAP = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
+  ".bmp": "image/bmp",
+  ".tiff": "image/tiff",
+  ".tif": "image/tiff",
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+  ".m4a": "audio/mp4",
+  ".mp4": "video/mp4",
+  ".mov": "video/quicktime",
+  ".webm": "video/webm",
+  ".pdf": "application/pdf",
+};
+
+const guessMimeType = (fileName) => {
+  if (!fileName) return "application/octet-stream";
+  const ext = extname(fileName).toLowerCase();
+  return EXTENSION_MIME_MAP[ext] || "application/octet-stream";
+};
+
+const runImgPipelineQuery = ({ query, outputDir, top }) => {
+  return new Promise((resolveResult, reject) => {
+    if (!IMG_PIPELINE_QUERY_CMD) {
+      reject(
+        new Error(
+          "IMG_PIPELINE_DIR or IMG_PIPELINE_QUERY_CMD not set. Configure env to use pipeline query.",
+        ),
+      );
+      return;
+    }
+    if (!existsSync(IMG_PIPELINE_QUERY_CMD)) {
+      reject(new Error(`query-embed not found: ${IMG_PIPELINE_QUERY_CMD}`));
+      return;
+    }
+
+    const resolvedOutput = outputDir
+      ? resolveUserPath(outputDir, homedir())
+      : IMG_PIPELINE_DEFAULT_OUTPUT;
+    const safeTop = Number.isFinite(Number(top)) ? Math.max(1, Number(top)) : 5;
+    const args = [query, resolvedOutput, "--json", "--top", String(safeTop), "--paths"];
+
+    const proc = spawn(IMG_PIPELINE_QUERY_CMD, args, { env: { ...process.env } });
+    let stdout = "";
+    let stderr = "";
+    proc.stdout.on("data", (chunk) => (stdout += chunk));
+    proc.stderr.on("data", (chunk) => (stderr += chunk));
+    proc.on("error", (err) => reject(err));
+    proc.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(stderr || `query-embed exited with code ${code}`));
+        return;
+      }
+      try {
+        const parsed = JSON.parse(stdout.trim() || "[]");
+        resolveResult({ outputDir: resolvedOutput, results: parsed });
+      } catch (err) {
+        reject(new Error(`Failed to parse query-embed output: ${err.message}`));
+      }
+    });
+  });
+};
+
+const normalizeBoolean = (value) => {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  if (typeof value === "string") {
+    const trimmed = value.trim().toLowerCase();
+    if (["true", "1", "yes", "y", "on"].includes(trimmed)) return true;
+    if (["false", "0", "no", "n", "off"].includes(trimmed)) return false;
+  }
+  return null;
+};
+
+const resolveSkillPath = (value, baseDir) => {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return "";
+  if (trimmed.startsWith("~")) {
+    const withoutTilde = trimmed.slice(1).replace(/^\/+/, "");
+    return join(homedir(), withoutTilde);
+  }
+  if (trimmed.startsWith("/")) return trimmed;
+  return resolve(baseDir, trimmed);
+};
+
+const resolveSkills = (value, baseDir) => {
+  const list = normalizeStringList(value);
+  if (!list || list.length === 0) return null;
+  const resolved = list.map((entry) => resolveSkillPath(entry, baseDir)).filter(Boolean);
+  const deduped = Array.from(new Set(resolved));
+  return deduped.length > 0 ? deduped : null;
+};
+
+const resolveWorkspaceDir = (agentId, override) => {
+  if (override) return resolveUserPath(override, LOONG_WORKSPACES_DIR);
+  return join(LOONG_WORKSPACES_DIR, agentId);
+};
+
+const validateAgentNames = (configs) => {
+  const registry = new Map();
+  const errors = [];
+
+  const register = (agentId, label, key) => {
+    if (!key) return;
+    const existing = registry.get(key);
+    if (existing && existing !== agentId) {
+      errors.push(`duplicate ${label} '${key}' between ${existing} and ${agentId}`);
+      return;
+    }
+    registry.set(key, agentId);
+  };
+
+  for (const config of configs) {
+    if (!config) continue;
+    const id = config.id;
+    const nameZh = config.nameZh;
+    const nameEn = config.nameEn;
+    if (!nameZh && !nameEn) {
+      errors.push(`agent ${id} missing nameZh/nameEn`);
+      continue;
+    }
+    if (nameZh) register(id, "nameZh", `zh:${nameZh}`);
+    if (nameEn) register(id, "nameEn", `en:${nameEn.toLowerCase()}`);
+  }
+
+  if (errors.length > 0) {
+    for (const err of errors) {
+      console.error(`[loong] agent name conflict: ${err}`);
+    }
+    return false;
+  }
+
+  return true;
+};
+
+const ensureStateDirs = () => {
+  mkdirSync(LOONG_STATE_DIR, { recursive: true });
+  mkdirSync(LOONG_WORKSPACES_DIR, { recursive: true });
+  mkdirSync(LOONG_SESSIONS_DIR, { recursive: true });
+  mkdirSync(LOONG_USERS_DIR, { recursive: true });
+  mkdirSync(LOONG_RUNTIME_CHANNELS_DIR, { recursive: true });
+  mkdirSync(LOONG_RUNTIME_OUTBOUND_DIR, { recursive: true });
+  mkdirSync(LOONG_RUNTIME_SUBAGENTS_DIR, { recursive: true });
+  if (IMESSAGE_ENABLED) {
+    mkdirSync(join(LOONG_RUNTIME_CHANNELS_DIR, "imessage", "session-map"), {
+      recursive: true,
+    });
+    mkdirSync(IMESSAGE_OUTBOUND_DIR, { recursive: true });
+  }
+};
+
+ensureStateDirs();
+
+const SUBAGENT_RUNS_FILE = join(LOONG_RUNTIME_SUBAGENTS_DIR, "runs.json");
+const subagentRuns = new Map();
+const subagentDirectReplies = new Map();
+
+const loadSubagentRuns = () => {
+  if (!existsSync(SUBAGENT_RUNS_FILE)) return;
+  try {
+    const raw = readFileSync(SUBAGENT_RUNS_FILE, "utf8");
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      for (const entry of parsed) {
+        if (!entry?.runId) continue;
+        subagentRuns.set(entry.runId, entry);
+      }
+    }
+  } catch (err) {
+    console.error(`[loong] failed to load subagent runs: ${err.message}`);
+  }
+};
+
+const persistSubagentRuns = () => {
+  try {
+    const payload = Array.from(subagentRuns.values());
+    writeFileSync(SUBAGENT_RUNS_FILE, JSON.stringify(payload, null, 2));
+  } catch (err) {
+    console.error(`[loong] failed to save subagent runs: ${err.message}`);
+  }
+};
+
+loadSubagentRuns();
+
+const piCmdParts = PI_CMD.split(/\s+/).filter(Boolean);
+const piCmd = piCmdParts[0];
+const piBaseArgs = piCmdParts.slice(1);
+
+const clients = new Set();
+const webContexts = new Map();
+
+const gatewayConfig = loadGatewayConfig();
+const agents = new Map();
+const agentList = [];
+const defaultAgentId = initAgents(gatewayConfig);
+
+if (!defaultAgentId) {
+  console.error("[loong] no agents loaded; check config and agents directory");
+  process.exit(1);
+}
+
+const publicDir = process.env.LOONG_WEB_DIST || join(__dirname, "..", "..", "web", "dist");
+
+if (!existsSync(publicDir)) {
+  console.warn(`[loong] web dist not found: ${publicDir}`);
+}
+
+const parseRequestUrl = (req) => {
+  const host = req.headers.host || "localhost";
+  try {
+    return new URL(req.url || "/", `http://${host}`);
+  } catch {
+    return null;
+  }
+};
+
+const safeDecodeURIComponent = (value) => {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
+};
+
+const resolvePublicFilePath = (pathname) => {
+  if (!pathname) return null;
+  const normalizedPath = pathname === "/" ? "/index.html" : pathname;
+  const decodedPath = safeDecodeURIComponent(normalizedPath);
+  if (!decodedPath || decodedPath.includes("\0")) return null;
+  const publicRoot = resolve(publicDir);
+  const resolvedPath = resolve(publicRoot, `.${decodedPath}`);
+  if (resolvedPath !== publicRoot && !resolvedPath.startsWith(publicRoot + sep)) {
+    return null;
+  }
+  return resolvedPath;
+};
+
+const getRequestPassword = (req, parsedUrl) => {
+  const authHeader = req.headers.authorization;
+  if (typeof authHeader === "string" && authHeader.trim()) {
+    const trimmed = authHeader.trim();
+    if (trimmed.toLowerCase().startsWith("bearer ")) {
+      return trimmed.slice(7).trim();
+    }
+    if (trimmed.toLowerCase().startsWith("basic ")) {
+      try {
+        const decoded = Buffer.from(trimmed.slice(6), "base64").toString("utf8");
+        const separator = decoded.indexOf(":");
+        return separator >= 0 ? decoded.slice(separator + 1) : decoded;
+      } catch {
+        // ignore
+      }
+    }
+  }
+  const headerPassword = req.headers["x-loong-password"];
+  if (typeof headerPassword === "string" && headerPassword.trim()) {
+    return headerPassword.trim();
+  }
+  const url = parsedUrl || parseRequestUrl(req);
+  const queryPassword = url?.searchParams?.get("password");
+  if (queryPassword) return queryPassword;
+  return "";
+};
+
+const isAuthorizedRequest = (req, parsedUrl) => {
+  if (!PASSWORD_REQUIRED) return true;
+  return getRequestPassword(req, parsedUrl) === LOONG_PASSWORD;
+};
+
+const sendUnauthorized = (res) => {
+  res.writeHead(401, {
+    "content-type": "text/plain",
+    "www-authenticate": 'Basic realm="loong"',
+  });
+  res.end("Unauthorized");
+};
+
+const sendJson = (res, statusCode, payload) => {
+  res.writeHead(statusCode, { "content-type": "application/json" });
+  res.end(JSON.stringify(payload));
+};
+
+const isLocalRequest = (req) => {
+  const remote = req.socket?.remoteAddress || "";
+  return remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1";
+};
+
+const readBody = (req, { maxBytes = MAX_BODY_BYTES } = {}) => {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    let bytes = 0;
+    let rejected = false;
+    req.on("data", (chunk) => {
+      if (rejected) return;
+      bytes += chunk.length;
+      if (maxBytes > 0 && bytes > maxBytes) {
+        rejected = true;
+        reject(new Error("Request body too large"));
+        req.destroy();
+        return;
+      }
+      body += chunk;
+    });
+    req.on("end", () => {
+      if (rejected) return;
+      try {
+        resolve(body ? JSON.parse(body) : {});
+      } catch (e) {
+        reject(e);
+      }
+    });
+    req.on("error", reject);
+  });
+};
+
+const server = createServer((req, res) => {
+  const url = parseRequestUrl(req);
+  if (!url) {
+    res.writeHead(400);
+    res.end();
+    return;
+  }
+
+  if (!isAuthorizedRequest(req, url)) {
+    sendUnauthorized(res);
+    return;
+  }
+
+  if (url.pathname === "/health") {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(
+      JSON.stringify({
+        ok: true,
+        agents: agentList,
+        defaultAgent: defaultAgentId,
+      }),
+    );
+    return;
+  }
+
+  // GET /api/models/registry - built-in provider catalog + local models config
+  if (url.pathname === "/api/models/registry" && req.method === "GET") {
+    if (NOTIFY_LOCAL_ONLY && !isLocalRequest(req)) {
+      sendJson(res, 403, { error: "Forbidden" });
+      return;
+    }
+    const config = readModelsConfig();
+    const providers = getBuiltinProviderCatalog();
+    sendJson(res, 200, {
+      providers,
+      config,
+      path: PI_MODELS_PATH,
+    });
+    return;
+  }
+
+  // POST /api/models/config - upsert provider config to models.json
+  if (url.pathname === "/api/models/config" && req.method === "POST") {
+    if (NOTIFY_LOCAL_ONLY && !isLocalRequest(req)) {
+      sendJson(res, 403, { error: "Forbidden" });
+      return;
+    }
+
+    readBody(req)
+      .then((body) => {
+        const providerId = typeof body.providerId === "string" ? body.providerId.trim() : "";
+        const provider = body.provider && typeof body.provider === "object" ? body.provider : null;
+        if (!providerId) {
+          sendJson(res, 400, { error: "Missing providerId" });
+          return;
+        }
+        if (!provider) {
+          sendJson(res, 400, { error: "Missing provider config" });
+          return;
+        }
+
+        const config = readModelsConfig();
+        config.providers = config.providers || {};
+        config.providers[providerId] = provider;
+
+        const result = writeModelsConfig(config);
+        if (!result.ok) {
+          sendJson(res, 500, { error: result.error || "Failed to write models.json" });
+          return;
+        }
+
+        // Restart agents to reload models.json
+        restartAgentProcesses();
+
+        sendJson(res, 200, {
+          success: true,
+          config,
+        });
+      })
+      .catch((err) => {
+        const status = err?.message === "Request body too large" ? 413 : 400;
+        sendJson(res, status, {
+          error: status === 413 ? "Request body too large" : "Invalid JSON body",
+        });
+      });
+    return;
+  }
+
+  // POST /api/notify - 本地主动推送文字给 WebSocket 客户端
+  if (url.pathname === "/api/notify" && req.method === "POST") {
+    if (NOTIFY_LOCAL_ONLY && !isLocalRequest(req)) {
+      sendJson(res, 403, { error: "Forbidden" });
+      return;
+    }
+
+    readBody(req)
+      .then((body) => {
+        const { text, agentId, scope, prefix } = body;
+        if (!text || typeof text !== "string") {
+          sendJson(res, 400, { error: "Missing or invalid 'text' field" });
+          return;
+        }
+
+        const resolvedScope = scope || (agentId ? "agent" : "all");
+        if (resolvedScope !== "agent" && resolvedScope !== "all") {
+          sendJson(res, 400, { error: "Invalid 'scope' field" });
+          return;
+        }
+
+        const agent = agentId ? agents.get(agentId) : null;
+        if (resolvedScope === "agent" && !agent) {
+          sendJson(res, 404, { error: "Agent not found" });
+          return;
+        }
+
+        const shouldPrefix = typeof prefix === "boolean" ? prefix : Boolean(agent);
+        const formattedText = shouldPrefix && agent ? formatAgentReply(agent, text) : text;
+        const msg = JSON.stringify({ type: "gateway_message", text: formattedText });
+        let sentCount = 0;
+
+        for (const client of clients) {
+          if (client.readyState !== WebSocket.OPEN) continue;
+          if (resolvedScope === "agent") {
+            const context = webContexts.get(client);
+            if (context?.agentId !== agent?.id) continue;
+          }
+          client.send(msg);
+          sentCount++;
+        }
+
+        console.log(
+          `[loong] /api/notify scope=${resolvedScope} sent=${sentCount}: ${text.substring(0, 50)}...`,
+        );
+        sendJson(res, 200, {
+          success: true,
+          sentCount,
+          scope: resolvedScope,
+          agentId: agent?.id ?? null,
+        });
+      })
+      .catch((err) => {
+        const status = err?.message === "Request body too large" ? 413 : 400;
+        sendJson(res, status, {
+          error: status === 413 ? "Request body too large" : "Invalid JSON body",
+        });
+      });
+    return;
+  }
+
+  // POST /api/pipeline/query-media - 调用 img-pipeline 查询并返回媒体内容
+  if (url.pathname === "/api/pipeline/query-media" && req.method === "POST") {
+    if (NOTIFY_LOCAL_ONLY && !isLocalRequest(req)) {
+      sendJson(res, 403, { error: "Forbidden" });
+      return;
+    }
+
+    readBody(req)
+      .then(async (body) => {
+        const {
+          query,
+          outputDir,
+          top = 5,
+          minScore,
+          includeContent = true,
+          includePaths = true,
+          maxBytes,
+          maxTotalBytes,
+          allowedMimeTypes,
+          allowedExtensions,
+        } = body || {};
+
+        if (!query || typeof query !== "string") {
+          sendJson(res, 400, { error: "Missing or invalid 'query' field" });
+          return;
+        }
+
+        const topNumber = Number(top);
+        if (!Number.isFinite(topNumber) || topNumber <= 0) {
+          sendJson(res, 400, { error: "Invalid 'top' field" });
+          return;
+        }
+
+        const safeTop = Math.min(topNumber, IMG_PIPELINE_MAX_TOP || topNumber);
+        const parsedMinScore = minScore == null ? null : Number(minScore);
+        if (
+          parsedMinScore != null &&
+          (!Number.isFinite(parsedMinScore) || parsedMinScore < -1 || parsedMinScore > 1)
+        ) {
+          sendJson(res, 400, { error: "Invalid 'minScore' field" });
+          return;
+        }
+
+        const safeMaxBytes = Math.min(
+          Number.isFinite(Number(maxBytes)) ? Number(maxBytes) : IMG_PIPELINE_MAX_BYTES,
+          IMG_PIPELINE_MAX_BYTES,
+        );
+        const safeMaxTotalBytes = Math.min(
+          Number.isFinite(Number(maxTotalBytes))
+            ? Number(maxTotalBytes)
+            : IMG_PIPELINE_MAX_TOTAL_BYTES,
+          IMG_PIPELINE_MAX_TOTAL_BYTES,
+        );
+
+        const allowedMimes = normalizeStringList(allowedMimeTypes);
+        const allowedExts = normalizeStringList(allowedExtensions);
+
+        let queryResult;
+        try {
+          queryResult = await runImgPipelineQuery({ query, outputDir, top: safeTop });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          sendJson(res, 500, { error: message });
+          return;
+        }
+
+        const results = [];
+        const skipped = [];
+        let totalBytes = 0;
+
+        for (const item of queryResult.results || []) {
+          const score = Number(item?.score ?? item?.sim ?? 0);
+          const hash = item?.hash || null;
+          if (!hash) continue;
+          if (parsedMinScore != null && score < parsedMinScore) {
+            skipped.push({ hash, reason: "below_min_score" });
+            continue;
+          }
+
+          let filePath = item?.path;
+          if (!filePath && queryResult.outputDir) {
+            const metaPath = join(queryResult.outputDir, "metadata", `${hash}.json`);
+            if (existsSync(metaPath)) {
+              try {
+                const meta = JSON.parse(readFileSync(metaPath, "utf8"));
+                filePath = meta?.filename || null;
+              } catch {
+                filePath = null;
+              }
+            }
+          }
+
+          if (!filePath) {
+            skipped.push({ hash, reason: "missing_path" });
+            continue;
+          }
+
+          const resolvedPath = resolveUserPath(filePath, homedir());
+          if (!existsSync(resolvedPath)) {
+            skipped.push({ hash, reason: "file_not_found" });
+            continue;
+          }
+
+          const stat = statSync(resolvedPath);
+          if (stat.size > safeMaxBytes) {
+            skipped.push({ hash, reason: "file_too_large", size: stat.size });
+            continue;
+          }
+          if (totalBytes + stat.size > safeMaxTotalBytes) {
+            skipped.push({ hash, reason: "total_limit_exceeded" });
+            continue;
+          }
+
+          const fileName = basename(resolvedPath);
+          const mimeType = guessMimeType(fileName);
+          if (allowedMimes) {
+            const ok = allowedMimes.some(
+              (entry) => mimeType === entry || mimeType.startsWith(entry),
+            );
+            if (!ok) {
+              skipped.push({ hash, reason: "mime_not_allowed", mimeType });
+              continue;
+            }
+          }
+          if (allowedExts) {
+            const ext = extname(fileName).toLowerCase().replace(".", "");
+            if (!allowedExts.includes(ext)) {
+              skipped.push({ hash, reason: "ext_not_allowed", ext });
+              continue;
+            }
+          }
+
+          const resultItem = {
+            score,
+            hash,
+            mimeType,
+            fileName,
+            sizeBytes: stat.size,
+          };
+          if (includePaths) {
+            resultItem.path = resolvedPath;
+          }
+          if (includeContent) {
+            resultItem.content = readFileSync(resolvedPath).toString("base64");
+          }
+
+          results.push(resultItem);
+          totalBytes += stat.size;
+          if (results.length >= safeTop) break;
+        }
+
+        sendJson(res, 200, {
+          success: true,
+          query,
+          outputDir: queryResult.outputDir,
+          top: safeTop,
+          minScore: parsedMinScore,
+          maxBytes: safeMaxBytes,
+          maxTotalBytes: safeMaxTotalBytes,
+          results,
+          skipped,
+        });
+      })
+      .catch((err) => {
+        const status = err?.message === "Request body too large" ? 413 : 400;
+        sendJson(res, status, {
+          error: status === 413 ? "Request body too large" : "Invalid JSON body",
+        });
+      });
+    return;
+  }
+
+  // POST /api/subagents/spawn - 由父 agent 触发子 agent 并等待结果
+  if (url.pathname === "/api/subagents/spawn" && req.method === "POST") {
+    if (NOTIFY_LOCAL_ONLY && !isLocalRequest(req)) {
+      sendJson(res, 403, { error: "Forbidden" });
+      return;
+    }
+
+    readBody(req)
+      .then(async (body) => {
+        const {
+          task,
+          agentId,
+          parentAgentId,
+          label,
+          timeoutMs = 60000,
+          replyMode,
+          directReply,
+        } = body || {};
+        if (!task || typeof task !== "string") {
+          sendJson(res, 400, { error: "Missing or invalid 'task' field" });
+          return;
+        }
+        if (!agentId || typeof agentId !== "string") {
+          sendJson(res, 400, { error: "Missing or invalid 'agentId' field" });
+          return;
+        }
+        if (!parentAgentId || typeof parentAgentId !== "string") {
+          sendJson(res, 400, { error: "Missing or invalid 'parentAgentId' field" });
+          return;
+        }
+
+        const parentAgent = agents.get(parentAgentId);
+        if (!parentAgent) {
+          sendJson(res, 404, { error: "Parent agent not found" });
+          return;
+        }
+        const agent = agents.get(agentId);
+        if (!agent) {
+          sendJson(res, 404, { error: "Agent not found" });
+          return;
+        }
+
+        const parentTask = parentAgent.currentTask;
+        if (!parentTask) {
+          sendJson(res, 409, { error: "Parent agent has no active task" });
+          return;
+        }
+
+        const allowAgents = parentAgent.subagents?.allowAgents || [];
+        const allowAll = allowAgents.includes("*");
+        if (!allowAll && !allowAgents.includes(agentId)) {
+          sendJson(res, 403, { error: "Parent agent is not allowed to spawn this agent" });
+          return;
+        }
+
+        const parentDepth = Number.isFinite(parentTask.subagentDepth)
+          ? parentTask.subagentDepth
+          : 0;
+        const maxDepth = parentAgent.subagents?.maxDepth ?? LOONG_SUBAGENT_MAX_DEPTH;
+        if (parentDepth + 1 > maxDepth) {
+          sendJson(res, 403, { error: "Subagent max depth exceeded" });
+          return;
+        }
+
+        let resolvedReplyMode = typeof replyMode === "string" ? replyMode.trim().toLowerCase() : "";
+        if (!resolvedReplyMode) {
+          resolvedReplyMode = directReply === true ? "direct" : "parent";
+        }
+        if (!"parent,direct".split(",").includes(resolvedReplyMode)) {
+          sendJson(res, 400, { error: "Invalid 'replyMode' field" });
+          return;
+        }
+
+        const replyModeRequested = resolvedReplyMode;
+        const directContext =
+          resolvedReplyMode === "direct" ? buildDirectReplyContext(parentTask) : null;
+        if (resolvedReplyMode === "direct" && !directContext) {
+          resolvedReplyMode = "parent";
+        }
+
+        const runId = randomUUID();
+        const run = {
+          runId,
+          parentAgentId,
+          parentTaskId: parentTask.id || null,
+          agentId,
+          label: label || null,
+          depth: parentDepth + 1,
+          status: "running",
+          replyMode: resolvedReplyMode,
+          replyModeRequested,
+          replySource: directContext?.source || null,
+          replyChatId: directContext?.chatId ?? null,
+          replySender: directContext?.sender ?? null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        subagentRuns.set(runId, run);
+        persistSubagentRuns();
+        if (resolvedReplyMode === "direct" && directContext) {
+          subagentDirectReplies.set(runId, directContext);
+        }
+
+        const replyPromise = new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            reject(new Error("Timeout waiting for subagent response"));
+          }, timeoutMs);
+
+          enqueueAgentPrompt(agent, {
+            source: "subagent",
+            text: task,
+            forceNewSession: true,
+            subagentRunId: runId,
+            subagentDepth: parentDepth + 1,
+            onReply: (reply) => {
+              clearTimeout(timeout);
+              resolve(reply);
+            },
+          });
+        });
+
+        try {
+          const reply = await replyPromise;
+          run.status = "done";
+          run.completedAt = new Date().toISOString();
+          run.updatedAt = new Date().toISOString();
+          subagentRuns.set(runId, run);
+          persistSubagentRuns();
+          subagentDirectReplies.delete(runId);
+          const replyPayload = resolvedReplyMode === "direct" ? "" : reply;
+          sendJson(res, 200, {
+            success: true,
+            runId,
+            reply: replyPayload,
+            replyMode: resolvedReplyMode,
+          });
+        } catch (err) {
+          run.status = "failed";
+          run.error = err.message;
+          run.completedAt = new Date().toISOString();
+          run.updatedAt = new Date().toISOString();
+          subagentRuns.set(runId, run);
+          persistSubagentRuns();
+          subagentDirectReplies.delete(runId);
+          sendJson(res, 504, { error: err.message, runId });
+        }
+      })
+      .catch((err) => {
+        const status = err?.message === "Request body too large" ? 413 : 400;
+        sendJson(res, status, {
+          error: status === 413 ? "Request body too large" : "Invalid JSON body",
+        });
+      });
+    return;
+  }
+
+  // POST /api/ask - 发送给 LLM 处理，然后推送回复给客户端
+  if (url.pathname === "/api/ask" && req.method === "POST") {
+    readBody(req)
+      .then(async (body) => {
+        const { message, agentId = defaultAgentId, timeoutMs = 60000 } = body;
+        if (!message || typeof message !== "string") {
+          sendJson(res, 400, { error: "Missing or invalid 'message' field" });
+          return;
+        }
+
+        const agent = agents.get(agentId) || agents.get(defaultAgentId);
+        if (!agent) {
+          sendJson(res, 404, { error: "Agent not found" });
+          return;
+        }
+
+        // 检查 agent 是否忙碌
+        if (agent.busy) {
+          sendJson(res, 503, { error: "Agent is busy, try again later", busy: true });
+          return;
+        }
+
+        console.log(`[loong] /api/ask processing: ${message.substring(0, 50)}...`);
+
+        // 创建 Promise 等待回复
+        const replyPromise = new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            reject(new Error("Timeout waiting for agent response"));
+          }, timeoutMs);
+
+          enqueueAgentPrompt(agent, {
+            source: "api",
+            text: message,
+            onReply: (reply) => {
+              clearTimeout(timeout);
+              resolve(reply);
+            },
+          });
+        });
+
+        try {
+          const reply = await replyPromise;
+          console.log(`[loong] /api/ask reply: ${reply.substring(0, 50)}...`);
+          sendJson(res, 200, { success: true, reply });
+        } catch (err) {
+          sendJson(res, 504, { error: err.message });
+        }
+      })
+      .catch((err) => {
+        const status = err?.message === "Request body too large" ? 413 : 400;
+        sendJson(res, status, {
+          error: status === 413 ? "Request body too large" : "Invalid JSON body",
+        });
+      });
+    return;
+  }
+
+  const filePath = resolvePublicFilePath(url.pathname);
+  if (!filePath) {
+    res.writeHead(404);
+    res.end();
+    return;
+  }
+
+  try {
+    const stat = statSync(filePath);
+    if (!stat.isFile()) {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+
+    const ext = extname(filePath);
+    const contentType =
+      ext === ".html"
+        ? "text/html"
+        : ext === ".js"
+          ? "text/javascript"
+          : ext === ".css"
+            ? "text/css"
+            : "application/octet-stream";
+
+    res.writeHead(200, { "content-type": contentType });
+    createReadStream(filePath).pipe(res);
+  } catch {
+    res.writeHead(404);
+    res.end();
+  }
+});
+
+const wss = new WebSocketServer({ server, path: "/ws" });
+
+wss.on("connection", (ws, req) => {
+  if (PASSWORD_REQUIRED && (!req || !isAuthorizedRequest(req))) {
+    ws.close(1008, "Unauthorized");
+    return;
+  }
+  ws.isAlive = true;
+  ws.on("pong", () => {
+    ws.isAlive = true;
+  });
+  clients.add(ws);
+  webContexts.set(ws, { agentId: defaultAgentId });
+  ws.send(
+    JSON.stringify({
+      type: "gateway_ready",
+      agents: agentList,
+      defaultAgent: defaultAgentId,
+      activeAgent: defaultAgentId,
+      loongState: LOONG_STATE_DIR,
+      loongWorkspaces: LOONG_WORKSPACES_DIR,
+      loongSessions: LOONG_SESSIONS_DIR,
+      loongRuntime: LOONG_RUNTIME_DIR,
+    }),
+  );
+
+  ws.on("message", async (data) => {
+    let payload;
+    try {
+      payload = JSON.parse(data.toString());
+    } catch {
+      ws.send(JSON.stringify({ type: "error", error: "Invalid JSON" }));
+      return;
+    }
+
+    if (!payload || typeof payload !== "object" || !payload.type) {
+      ws.send(JSON.stringify({ type: "error", error: "Missing 'type' in message" }));
+      return;
+    }
+
+    if (payload.type === "list_agents") {
+      ws.send(
+        JSON.stringify({
+          type: "response",
+          id: payload.id,
+          command: "list_agents",
+          success: true,
+          data: { agents: agentList, defaultAgent: defaultAgentId },
+        }),
+      );
+      return;
+    }
+
+    if (payload.type === "switch_agent") {
+      const targetId = typeof payload.agentId === "string" ? payload.agentId : "";
+      const agent = agents.get(targetId);
+      if (!agent) {
+        ws.send(JSON.stringify({ type: "error", error: "Agent not found" }));
+        return;
+      }
+      webContexts.set(ws, { agentId: agent.id });
+      ws.send(
+        JSON.stringify({
+          type: "gateway_agent_switched",
+          agent: { id: agent.id, name: agent.name, keywords: agent.keywords },
+        }),
+      );
+      return;
+    }
+
+    const context = webContexts.get(ws) || { agentId: defaultAgentId };
+    const currentAgent = agents.get(context.agentId) || agents.get(defaultAgentId);
+    if (!currentAgent) {
+      ws.send(JSON.stringify({ type: "error", error: "No agent available" }));
+      return;
+    }
+
+    if (payload.type === "list_sessions") {
+      await sendAgentRequest(currentAgent, { type: "get_state" }).catch(() => null);
+      if (payload.force) {
+        currentAgent.sessionCache = null;
+      }
+      const entries = getSessionEntries(currentAgent);
+      ws.send(
+        JSON.stringify({
+          type: "response",
+          id: payload.id,
+          command: "list_sessions",
+          success: true,
+          data: { sessions: entries },
+        }),
+      );
+      return;
+    }
+
+    if (payload.type === "rename_session") {
+      await sendAgentRequest(currentAgent, { type: "get_state" }).catch(() => null);
+      const sessionPath = typeof payload.sessionPath === "string" ? payload.sessionPath : "";
+      const label = typeof payload.label === "string" ? payload.label : "";
+      const result = await renameSessionFile(currentAgent, sessionPath, label);
+      ws.send(
+        JSON.stringify({
+          type: "response",
+          id: payload.id,
+          command: "rename_session",
+          success: result.ok,
+          data: result.ok
+            ? {
+                sessionPath: result.sessionPath,
+                sessionId: result.sessionId,
+                label: result.label,
+                renamed: result.renamed,
+              }
+            : null,
+          error: result.ok ? null : result.error,
+        }),
+      );
+      return;
+    }
+
+    if (payload.type === "delete_session") {
+      await sendAgentRequest(currentAgent, { type: "get_state" }).catch(() => null);
+      const sessionPath = typeof payload.sessionPath === "string" ? payload.sessionPath : "";
+      const result = deleteSessionFile(currentAgent, sessionPath);
+      ws.send(
+        JSON.stringify({
+          type: "response",
+          id: payload.id,
+          command: "delete_session",
+          success: result.ok,
+          data: result.ok
+            ? {
+                sessionPath: result.sessionPath,
+                sessionId: result.sessionId,
+              }
+            : null,
+          error: result.ok ? null : result.error,
+        }),
+      );
+      return;
+    }
+
+    if (payload.type === "prompt" && typeof payload.message === "string") {
+      const { agent, remainder, switched } = resolveAgentFromText(payload.message, context.agentId);
+
+      if (agent && switched) {
+        webContexts.set(ws, { agentId: agent.id });
+        ws.send(
+          JSON.stringify({
+            type: "gateway_agent_switched",
+            agent: { id: agent.id, name: agent.name, keywords: agent.keywords },
+          }),
+        );
+      }
+
+      const trimmed = remainder.trim();
+      if (!trimmed) {
+        sendGatewayMessage(ws, `已切换到 ${agent.name}`);
+        return;
+      }
+
+      const command = resolveCommand(trimmed);
+      const handled = command
+        ? await handleGatewayCommand({
+            agent,
+            command,
+            respond: (replyText) => sendGatewayMessage(ws, replyText),
+            sendPrompt: (promptText) =>
+              enqueueAgentPrompt(agent, {
+                source: "web",
+                ws,
+                text: promptText,
+              }),
+            contextKey: null,
+          })
+        : false;
+      if (handled) {
+        return;
+      }
+
+      enqueueAgentPrompt(agent, {
+        source: "web",
+        ws,
+        text: trimmed,
+      });
+      return;
+    }
+
+    // Forward other RPC commands to current agent
+    sendToPi(currentAgent, payload);
+  });
+
+  ws.on("close", () => {
+    clients.delete(ws);
+    webContexts.delete(ws);
+  });
+});
+
+const heartbeatInterval =
+  WS_HEARTBEAT_MS > 0
+    ? setInterval(() => {
+        for (const client of wss.clients) {
+          if (client.isAlive === false) {
+            client.terminate();
+            continue;
+          }
+          client.isAlive = false;
+          client.ping();
+        }
+      }, WS_HEARTBEAT_MS)
+    : null;
+
+wss.on("close", () => {
+  if (heartbeatInterval) {
+    clearInterval(heartbeatInterval);
+  }
+});
+
+const extractTextBlocks = (content) => {
+  if (!content) return "";
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((block) => {
+        if (!block) return "";
+        if (block.type === "text") return block.text || "";
+        if (block.type === "input_text") return block.text || "";
+        return "";
+      })
+      .join("");
+  }
+  return "";
+};
+
+const extractAssistantText = (messages = []) => {
+  const assistant = [...messages].reverse().find((msg) => msg?.role === "assistant");
+  return assistant ? extractTextBlocks(assistant.content) : "";
+};
+
+const MEDIA_EXTENSION_MAP = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/jpg": "jpg",
+  "image/gif": "gif",
+  "image/webp": "webp",
+  "audio/mpeg": "mp3",
+  "audio/mp3": "mp3",
+  "audio/wav": "wav",
+  "audio/x-wav": "wav",
+  "audio/mp4": "m4a",
+  "video/mp4": "mp4",
+  "video/quicktime": "mov",
+  "video/webm": "webm",
+  "application/pdf": "pdf",
+};
+
+const resolveMediaExtension = (mimeType, fileName) => {
+  if (fileName) {
+    const ext = extname(fileName).replace(".", "");
+    if (ext) return ext;
+  }
+  if (mimeType && MEDIA_EXTENSION_MAP[mimeType]) {
+    return MEDIA_EXTENSION_MAP[mimeType];
+  }
+  if (mimeType && mimeType.includes("/")) {
+    return mimeType.split("/")[1];
+  }
+  return "bin";
+};
+
+const sanitizeFileName = (name) => {
+  if (!name) return "attachment";
+  return name.replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/^_+|_+$/g, "") || "attachment";
+};
+
+const writeOutboundMediaFile = ({ data, mimeType, fileName }) => {
+  if (!data) return null;
+  const extension = resolveMediaExtension(mimeType, fileName);
+  const baseName = sanitizeFileName(fileName ? fileName.replace(/\.[^.]+$/, "") : "attachment");
+  const suffix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  const resolvedName = `${baseName}-${suffix}.${extension}`;
+  const filePath = join(IMESSAGE_OUTBOUND_DIR, resolvedName);
+  writeFileSync(filePath, Buffer.from(data, "base64"));
+  return filePath;
+};
+
+const resolveMediaPlaceholder = (mimeType) => {
+  if (!mimeType) return "<media:attachment>";
+  if (mimeType.startsWith("image/")) return "<media:image>";
+  if (mimeType.startsWith("audio/")) return "<media:audio>";
+  if (mimeType.startsWith("video/")) return "<media:video>";
+  return "<media:attachment>";
+};
+
+const collectOutboundMedia = (messages = []) => {
+  const items = [];
+  for (const message of messages) {
+    if (!message) continue;
+    if (message.role !== "assistant" && message.role !== "toolResult") continue;
+    if (Array.isArray(message.attachments)) {
+      for (const attachment of message.attachments) {
+        if (!attachment?.content) continue;
+        items.push({
+          data: attachment.content,
+          mimeType: attachment.mimeType || "application/octet-stream",
+          fileName: attachment.fileName || "attachment",
+        });
+      }
+    }
+    if (Array.isArray(message.content)) {
+      let imageIndex = 1;
+      for (const block of message.content) {
+        if (block?.type !== "image" || !block.data) continue;
+        items.push({
+          data: block.data,
+          mimeType: block.mimeType || "image/png",
+          fileName: `image-${imageIndex++}`,
+        });
+      }
+    }
+  }
+  return items;
+};
+
+const formatSessionSize = (bytes) => `${(bytes / 1024).toFixed(1)} KB`;
+
+const listSessionFiles = (rootDir) => {
+  if (!rootDir || !existsSync(rootDir)) return [];
+  const results = [];
+  const queue = [rootDir];
+
+  while (queue.length > 0) {
+    const current = queue.pop();
+    let entries = [];
+    try {
+      entries = readdirSync(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const fullPath = join(current, entry.name);
+      if (entry.isDirectory()) {
+        queue.push(fullPath);
+      } else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
+        results.push(fullPath);
+      }
+    }
+  }
+
+  return results;
+};
+
+const readSessionIndex = (agent) => {
+  if (!agent?.sessionIndexFile) {
+    return { version: 1, agentId: agent?.id, updatedAt: null, sessions: [] };
+  }
+  if (!existsSync(agent.sessionIndexFile)) {
+    return { version: 1, agentId: agent.id, updatedAt: null, sessions: [] };
+  }
+  try {
+    const raw = readFileSync(agent.sessionIndexFile, "utf8");
+    const parsed = JSON.parse(raw);
+    const sessions = Array.isArray(parsed?.sessions) ? parsed.sessions.filter(Boolean) : [];
+    return {
+      version: typeof parsed?.version === "number" ? parsed.version : 1,
+      agentId: parsed?.agentId || agent.id,
+      updatedAt: parsed?.updatedAt || null,
+      sessions,
+    };
+  } catch (err) {
+    console.warn(`[loong] failed to read session index: ${err.message}`);
+    return { version: 1, agentId: agent.id, updatedAt: null, sessions: [] };
+  }
+};
+
+const writeSessionIndex = (agent, index) => {
+  if (!agent?.sessionIndexFile) return;
+  try {
+    mkdirSync(dirname(agent.sessionIndexFile), { recursive: true });
+    writeFileSync(agent.sessionIndexFile, JSON.stringify(index, null, 2));
+  } catch (err) {
+    console.warn(`[loong] failed to write session index: ${err.message}`);
+  }
+};
+
+const resolveSessionIndexPath = (agent, entry) => {
+  const baseDir = agent.sessionRootDir || agent.sessionDir;
+  const raw = entry?.path;
+  if (raw && typeof raw === "string") {
+    if (raw.startsWith("/")) return raw;
+    return resolve(baseDir, raw);
+  }
+  if (entry?.id) return join(agent.sessionDir, `${entry.id}.jsonl`);
+  return "";
+};
+
+const syncSessionIndex = (agent) => {
+  const index = readSessionIndex(agent);
+  const sessionFiles = listSessionFiles(agent.sessionDir).sort();
+  const sessionsById = new Map(
+    index.sessions
+      .filter((entry) => entry && typeof entry.id === "string")
+      .map((entry) => [entry.id, entry]),
+  );
+  const nextSessions = [];
+  let changed = false;
+  const baseDir = agent.sessionRootDir || agent.sessionDir;
+
+  for (const filePath of sessionFiles) {
+    const id = basename(filePath).replace(/\.jsonl$/, "");
+    const prev = sessionsById.get(id) || {};
+    let stats = null;
+    try {
+      stats = statSync(filePath);
+    } catch {
+      stats = null;
+    }
+    const relPath = relative(baseDir, filePath).replace(/\\/g, "/");
+    const createdAt =
+      prev.createdAt || (stats ? new Date(stats.birthtimeMs || stats.mtimeMs).toISOString() : null);
+    const updatedAt = stats ? new Date(stats.mtimeMs).toISOString() : prev.updatedAt || createdAt;
+    const sizeBytes = stats ? stats.size : prev.sizeBytes;
+    const label = prev.label || id;
+    const nextEntry = {
+      ...prev,
+      id,
+      label,
+      path: relPath,
+      createdAt,
+      updatedAt,
+      sizeBytes,
+    };
+    nextSessions.push(nextEntry);
+    if (
+      !prev.id ||
+      prev.path !== relPath ||
+      prev.sizeBytes !== sizeBytes ||
+      prev.updatedAt !== updatedAt
+    ) {
+      changed = true;
+    }
+  }
+
+  if (nextSessions.length !== index.sessions.length) {
+    changed = true;
+  }
+
+  const nextIndex = {
+    version: 1,
+    agentId: index.agentId || agent.id,
+    updatedAt: changed ? new Date().toISOString() : index.updatedAt,
+    sessions: nextSessions,
+  };
+  if (changed) {
+    writeSessionIndex(agent, nextIndex);
+  }
+  return nextIndex;
+};
+
+const upsertSessionIndexEntry = (agent, sessionInfo) => {
+  if (!agent?.sessionIndexFile || !sessionInfo?.sessionId || !sessionInfo?.sessionPath) return;
+  const index = readSessionIndex(agent);
+  const baseDir = agent.sessionRootDir || agent.sessionDir;
+  const relPath = relative(baseDir, sessionInfo.sessionPath).replace(/\\/g, "/");
+  const nowIso = new Date().toISOString();
+  const sessions = Array.isArray(index.sessions) ? [...index.sessions] : [];
+  const existingIndex = sessions.findIndex((entry) => entry?.id === sessionInfo.sessionId);
+  let sizeBytes = existingIndex >= 0 ? sessions[existingIndex]?.sizeBytes : null;
+  try {
+    sizeBytes = statSync(sessionInfo.sessionPath).size;
+  } catch {
+    // ignore
+  }
+  const nextEntry = {
+    ...(existingIndex >= 0 ? sessions[existingIndex] : {}),
+    id: sessionInfo.sessionId,
+    label: sessionInfo.label || sessionInfo.sessionId,
+    path: relPath,
+    createdAt:
+      sessionInfo.createdAt || (existingIndex >= 0 ? sessions[existingIndex].createdAt : nowIso),
+    updatedAt: nowIso,
+    sizeBytes,
+  };
+  if (existingIndex >= 0) {
+    sessions[existingIndex] = nextEntry;
+  } else {
+    sessions.push(nextEntry);
+  }
+  writeSessionIndex(agent, {
+    version: 1,
+    agentId: index.agentId || agent.id,
+    updatedAt: nowIso,
+    sessions,
+  });
+};
+
+const extractSessionNameFromFile = (filePath) => {
+  if (!filePath || !existsSync(filePath)) return null;
+  try {
+    const content = readFileSync(filePath, "utf8");
+    const lines = content.split(/\r?\n/).filter(Boolean);
+    for (const line of lines) {
+      try {
+        const event = JSON.parse(line);
+        if (event.type === "session_info" && event.name) {
+          return event.name;
+        }
+      } catch {
+        // ignore invalid JSON lines
+      }
+    }
+  } catch {
+    // ignore file read errors
+  }
+  return null;
+};
+
+const getSessionEntries = (agent) => {
+  const now = Date.now();
+  if (
+    SESSION_CACHE_TTL_MS > 0 &&
+    agent.sessionCache &&
+    now - agent.sessionCache.updatedAt < SESSION_CACHE_TTL_MS
+  ) {
+    return agent.sessionCache.entries;
+  }
+
+  const index = syncSessionIndex(agent);
+  const currentPath = agent.currentSessionFile ? resolve(agent.currentSessionFile) : null;
+  const entries = index.sessions.map((entry) => {
+    const filePath = resolveSessionIndexPath(agent, entry);
+    let sizeText = "unknown";
+    if (typeof entry.sizeBytes === "number") {
+      sizeText = formatSessionSize(entry.sizeBytes);
+    } else if (filePath) {
+      try {
+        sizeText = formatSessionSize(statSync(filePath).size);
+      } catch {
+        // ignore
+      }
+    }
+    // Try to get auto-generated session name from session_info event
+    const autoName = filePath ? extractSessionNameFromFile(filePath) : null;
+    const label = autoName || entry.label || entry.id;
+    return {
+      id: entry.id,
+      name: label,
+      base: entry.label || entry.id,
+      path: filePath,
+      sizeText,
+      isCurrent: currentPath && filePath && resolve(filePath) === currentPath,
+    };
+  });
+
+  agent.sessionCache = { entries, updatedAt: now };
+  return entries;
+};
+
+const pad2 = (value) => String(value).padStart(2, "0");
+
+const createSessionPath = (agent, now = new Date()) => {
+  const dateLabel = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+  const timeLabel = `${pad2(now.getHours())}${pad2(now.getMinutes())}${pad2(now.getSeconds())}`;
+  const rand = Math.random().toString(36).slice(2, 8);
+  const sessionId = `${dateLabel}-${timeLabel}-${rand}`;
+  const sessionPath = join(agent.sessionDir, `${sessionId}.jsonl`);
+  return {
+    sessionId,
+    sessionPath,
+    label: `${dateLabel} ${timeLabel}`,
+    createdAt: now.toISOString(),
+  };
+};
+
+const relocateSessionFile = (fromPath, toPath) => {
+  if (!fromPath || !toPath) return { ok: false, error: "missing session path" };
+  mkdirSync(dirname(toPath), { recursive: true });
+  try {
+    renameSync(fromPath, toPath);
+    return { ok: true, moved: true };
+  } catch (err) {
+    try {
+      copyFileSync(fromPath, toPath);
+      try {
+        unlinkSync(fromPath);
+      } catch {
+        // ignore
+      }
+      return { ok: true, moved: false };
+    } catch (copyErr) {
+      return { ok: false, error: copyErr instanceof Error ? copyErr.message : String(copyErr) };
+    }
+  }
+};
+
+const normalizeSessionLabel = (label) => {
+  if (!label) return "";
+  return String(label).replace(/\s+/g, " ").trim();
+};
+
+const normalizeSessionId = (label) => {
+  const trimmed = normalizeSessionLabel(label).replace(/\.jsonl$/i, "");
+  if (!trimmed) return "";
+  const cleaned = trimmed
+    .replace(/[\\/:*?"<>|\x00-\x1f]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[.-]+|[.-]+$/g, "");
+  return cleaned.slice(0, 64);
+};
+
+const resolveSessionFilePath = (agent, sessionPath) => {
+  if (!agent?.sessionDir || typeof sessionPath !== "string") return null;
+  const resolvedPath = resolve(sessionPath);
+  const baseDir = resolve(agent.sessionDir);
+  if (resolvedPath !== baseDir && !resolvedPath.startsWith(`${baseDir}${sep}`)) {
+    return null;
+  }
+  if (!resolvedPath.endsWith(".jsonl")) return null;
+  return resolvedPath;
+};
+
+const resolveUniqueSessionPath = (dirPath, baseId, currentPath) => {
+  if (!dirPath) return "";
+  const fallback = `session-${Date.now().toString(36)}`;
+  const trimmedBase = baseId ? baseId.slice(0, 64) : fallback;
+  let candidateId = trimmedBase || fallback;
+  let counter = 1;
+
+  while (true) {
+    const candidatePath = join(dirPath, `${candidateId}.jsonl`);
+    if (currentPath && resolve(candidatePath) === resolve(currentPath)) {
+      return candidatePath;
+    }
+    if (!existsSync(candidatePath)) {
+      return candidatePath;
+    }
+    counter += 1;
+    const suffix = `-${counter}`;
+    const base = trimmedBase.slice(0, Math.max(1, 64 - suffix.length));
+    candidateId = `${base}${suffix}`;
+  }
+};
+
+const removeSessionIndexEntry = (agent, sessionId) => {
+  if (!agent?.sessionIndexFile || !sessionId) return;
+  const index = readSessionIndex(agent);
+  const nextSessions = index.sessions.filter((entry) => entry?.id !== sessionId);
+  if (nextSessions.length === index.sessions.length) return;
+  const nowIso = new Date().toISOString();
+  writeSessionIndex(agent, {
+    version: 1,
+    agentId: index.agentId || agent.id,
+    updatedAt: nowIso,
+    sessions: nextSessions,
+  });
+};
+
+const replaceIMessageSessionPath = (agent, fromPath, toPath) => {
+  if (!IMESSAGE_PER_CHAT || !agent?.imessageSessions) return;
+  const fromResolved = resolve(fromPath);
+  let changed = false;
+  for (const [key, value] of agent.imessageSessions.entries()) {
+    if (value && resolve(value) === fromResolved) {
+      agent.imessageSessions.set(key, toPath);
+      changed = true;
+    }
+  }
+  if (changed) {
+    persistIMessageSessionMap(agent);
+  }
+};
+
+const removeIMessageSessionPath = (agent, targetPath) => {
+  if (!IMESSAGE_PER_CHAT || !agent?.imessageSessions) return;
+  const targetResolved = resolve(targetPath);
+  let changed = false;
+  for (const [key, value] of agent.imessageSessions.entries()) {
+    if (value && resolve(value) === targetResolved) {
+      agent.imessageSessions.delete(key);
+      changed = true;
+    }
+  }
+  if (changed) {
+    persistIMessageSessionMap(agent);
+  }
+};
+
+const renameSessionFile = async (agent, sessionPath, label) => {
+  const resolvedPath = resolveSessionFilePath(agent, sessionPath);
+  if (!resolvedPath) return { ok: false, error: "会话路径无效" };
+  if (!existsSync(resolvedPath)) return { ok: false, error: "会话文件不存在" };
+  const normalizedLabel = normalizeSessionLabel(label);
+  if (!normalizedLabel) return { ok: false, error: "会话名称不能为空" };
+  const baseId = normalizeSessionId(normalizedLabel) || `session-${Date.now().toString(36)}`;
+  const targetDir = dirname(resolvedPath);
+  const targetPath = resolveUniqueSessionPath(targetDir, baseId, resolvedPath);
+  if (!targetPath) return { ok: false, error: "会话路径无效" };
+  const shouldRename = resolve(targetPath) !== resolve(resolvedPath);
+
+  if (shouldRename) {
+    const renameResult = relocateSessionFile(resolvedPath, targetPath);
+    if (!renameResult.ok) {
+      return { ok: false, error: renameResult.error || "会话重命名失败" };
+    }
+  }
+
+  const oldId = basename(resolvedPath).replace(/\.jsonl$/, "");
+  const nextId = basename(targetPath).replace(/\.jsonl$/, "");
+  const index = readSessionIndex(agent);
+  const prevEntry = index.sessions.find((entry) => entry?.id === oldId) || null;
+  const createdAt = prevEntry?.createdAt || null;
+
+  if (oldId && oldId !== nextId) {
+    removeSessionIndexEntry(agent, oldId);
+  }
+  upsertSessionIndexEntry(agent, {
+    sessionId: nextId,
+    sessionPath: targetPath,
+    label: normalizedLabel,
+    createdAt,
+  });
+
+  agent.sessionCache = null;
+
+  if (agent.currentSessionFile && resolve(agent.currentSessionFile) === resolve(resolvedPath)) {
+    agent.currentSessionFile = targetPath;
+    try {
+      await sendAgentRequest(agent, { type: "switch_session", sessionPath: targetPath });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[loong] failed to switch renamed session: ${message}`);
+    }
+  }
+
+  if (shouldRename) {
+    replaceIMessageSessionPath(agent, resolvedPath, targetPath);
+  }
+
+  return {
+    ok: true,
+    sessionPath: targetPath,
+    sessionId: nextId,
+    label: normalizedLabel,
+    renamed: shouldRename,
+  };
+};
+
+const deleteSessionFile = (agent, sessionPath) => {
+  const resolvedPath = resolveSessionFilePath(agent, sessionPath);
+  if (!resolvedPath) return { ok: false, error: "会话路径无效" };
+  if (!existsSync(resolvedPath)) return { ok: false, error: "会话文件不存在" };
+  if (agent.currentSessionFile && resolve(agent.currentSessionFile) === resolve(resolvedPath)) {
+    return { ok: false, error: "当前会话正在使用，请先切换后删除" };
+  }
+  try {
+    unlinkSync(resolvedPath);
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+  const sessionId = basename(resolvedPath).replace(/\.jsonl$/, "");
+  removeSessionIndexEntry(agent, sessionId);
+  agent.sessionCache = null;
+  removeIMessageSessionPath(agent, resolvedPath);
+  return { ok: true, sessionPath: resolvedPath, sessionId };
+};
+
+const notifyIMessage = async ({ text, chatId, sender }) => {
+  if (!imessageBridge) return;
+  await imessageBridge.sendMessage({
+    text,
+    chatId,
+    to: sender,
+    service: IMESSAGE_SERVICE,
+    region: IMESSAGE_REGION,
+  });
+};
+
+const safeNotify = async (notify, text) => {
+  try {
+    await notify(text);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[loong] notify failed: ${message}`);
+  }
+};
+
+const resolveAgentLabel = (agent) => `[${agent.name || agent.id}]`;
+
+const formatAgentReply = (agent, text) => {
+  if (!text) return text;
+  if (agent.replyPrefixMode === "never") return text;
+  return `${resolveAgentLabel(agent)} ${text}`.trim();
+};
+
+const matchVoiceCommand = (text) => {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+
+  const match = trimmed.match(/^new\b\s*(.*)$/i);
+  if (!match) return null;
+
+  const remainder = match[1]?.trim() || "";
+  if (/^(chat|session)\b/i.test(remainder)) return null;
+
+  return { type: "new_session", remainder };
+};
+
+const resolveCommand = (text) => matchVoiceCommand(text);
+
+const isSlashCommandText = (text) => {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("/")) return false;
+  return trimmed.length > 1 && !trimmed.startsWith("//");
+};
+
+const isAuthorized = (sender) => {
+  if (IMESSAGE_ALLOWLIST.length === 0) return true;
+  if (!sender) return false;
+  return IMESSAGE_ALLOWLIST.includes(sender);
+};
+
+const resolveIMessageKey = (entry) => {
+  if (entry.chatId != null) return `chat:${entry.chatId}`;
+  if (entry.sender) return `sender:${entry.sender}`;
+  return "unknown";
+};
+
+const handleGatewayCommand = async ({ agent, command, respond, sendPrompt, contextKey }) => {
+  if (!command || command.type !== "new_session") return false;
+  const { remainder } = command;
+
+  const trimmed = remainder.trim();
+  let promptText = trimmed;
+  let modelSpec = null;
+  if (trimmed) {
+    const [candidate, ...rest] = trimmed.split(/\s+/);
+    if (candidate && candidate.includes("/")) {
+      const resolved = await resolveModelSpec(agent, candidate);
+      if (resolved?.error) {
+        await respond(resolved.error);
+        return true;
+      }
+      modelSpec = resolved;
+      promptText = rest.join(" ").trim();
+    }
+  }
+
+  await sendAgentRequest(agent, { type: "new_session" });
+  if (modelSpec) {
+    await sendAgentRequest(agent, {
+      type: "set_model",
+      provider: modelSpec.provider,
+      modelId: modelSpec.modelId,
+    });
+  }
+  const state = await sendAgentRequest(agent, { type: "get_state" }).catch(() => null);
+  const sessionFile = state?.data?.sessionFile ?? null;
+  if (!sessionFile) {
+    await respond("新建会话失败（未获取到 session 文件）");
+    return true;
+  }
+
+  let activeSessionFile = sessionFile;
+  const sessionInfo = createSessionPath(agent);
+  const relocateResult = relocateSessionFile(sessionFile, sessionInfo.sessionPath);
+  if (relocateResult.ok) {
+    const switchResp = await sendAgentRequest(agent, {
+      type: "switch_session",
+      sessionPath: sessionInfo.sessionPath,
+    });
+    if (switchResp?.success === false) {
+      console.warn(`[loong] failed to switch session to ${sessionInfo.sessionPath}`);
+    } else {
+      activeSessionFile = sessionInfo.sessionPath;
+    }
+    upsertSessionIndexEntry(agent, sessionInfo);
+  } else {
+    console.warn(
+      `[loong] failed to relocate session file: ${relocateResult.error || "unknown error"}`,
+    );
+  }
+
+  agent.currentSessionFile = activeSessionFile;
+  updateSessionMapping(agent, contextKey, activeSessionFile);
+
+  if (promptText) {
+    sendPrompt(promptText);
+  } else {
+    const modelNote = modelSpec ? ` (${modelSpec.provider}/${modelSpec.modelId})` : "";
+    await respond(`已创建新会话${modelNote}。`);
+  }
+  return true;
+};
+
+const updateSessionMapping = (agent, sessionKey, sessionFile) => {
+  if (!IMESSAGE_PER_CHAT) return;
+  if (!sessionKey || !sessionFile) return;
+  agent.imessageSessions.set(sessionKey, sessionFile);
+  persistIMessageSessionMap(agent);
+};
+
+const resolveModelSpec = async (agent, token) => {
+  if (!token || !token.includes("/")) return null;
+  const [provider, modelId] = token.split("/");
+  if (!provider || !modelId) {
+    return { error: "模型格式应为 provider/model" };
+  }
+  const response = await sendAgentRequest(agent, { type: "get_available_models" });
+  const models = response?.data?.models ?? [];
+  const found = models.find((model) => model.provider === provider && model.id === modelId);
+  if (!found) {
+    return { error: `模型不存在: ${provider}/${modelId}` };
+  }
+  return { provider, modelId };
+};
+
+const resolveAgentFromText = (text, currentAgentId) => {
+  const trimmed = text.trim();
+  const lowered = trimmed.toLowerCase();
+  const boundaryChars = new Set([
+    "",
+    " ",
+    "\n",
+    "\t",
+    ":",
+    "：",
+    ",",
+    "，",
+    ".",
+    "。",
+    "!",
+    "！",
+    "?",
+    "？",
+    "、",
+    "-",
+  ]);
+
+  for (const agent of agents.values()) {
+    const keywords = [...agent.keywords].sort((a, b) => b.length - a.length);
+    for (const keyword of keywords) {
+      if (!keyword) continue;
+      const loweredKeyword = keyword.toLowerCase();
+      if (!lowered.startsWith(loweredKeyword)) continue;
+      const nextChar = lowered[loweredKeyword.length] || "";
+      if (!boundaryChars.has(nextChar)) continue;
+      let remainder = trimmed.slice(keyword.length).trim();
+      remainder = remainder.replace(/^[:：,，\-]+/, "").trim();
+      return {
+        agent,
+        remainder,
+        switched: agent.id !== currentAgentId,
+      };
+    }
+  }
+
+  const fallbackAgent =
+    (currentAgentId && agents.get(currentAgentId)) || agents.get(defaultAgentId);
+  return {
+    agent: fallbackAgent,
+    remainder: trimmed,
+    switched: false,
+  };
+};
+
+const clearTaskTimeout = (task) => {
+  if (task?.timeoutTimer) {
+    clearTimeout(task.timeoutTimer);
+    task.timeoutTimer = null;
+  }
+};
+
+const clearSlashCommandTimer = (task) => {
+  if (task?.slashCommandTimer) {
+    clearTimeout(task.slashCommandTimer);
+    task.slashCommandTimer = null;
+  }
+};
+
+const resolveTaskReply = (task, reply) => {
+  if (!task?.onReply || task.replySent) return false;
+  task.replySent = true;
+  task.onReply(reply);
+  return true;
+};
+
+const notifyTaskMessage = async (agent, task, text) => {
+  if (!task || !text) return;
+  const message = formatAgentReply(agent, text);
+  if (task.source === "imessage") {
+    await safeNotify(
+      (replyText) => notifyIMessage({ text: replyText, chatId: task.chatId, sender: task.sender }),
+      message,
+    );
+    return;
+  }
+  if (task.source === "web" && task.ws) {
+    sendGatewayMessage(task.ws, message);
+  }
+};
+
+const completeCurrentTask = (agent, task, { skipQueue = false } = {}) => {
+  if (!task) return;
+  clearTaskTimeout(task);
+  clearSlashCommandTimer(task);
+  agent.busy = false;
+  agent.currentTask = null;
+  if (!skipQueue) {
+    processNextAgent(agent);
+  }
+  broadcastAgentStatus(agent);
+};
+
+const failCurrentTask = async (agent, task, text, { skipQueue = false } = {}) => {
+  if (!task) return;
+  task.aborted = true;
+  clearTaskTimeout(task);
+  clearSlashCommandTimer(task);
+  await notifyTaskMessage(agent, task, text);
+  agent.busy = false;
+  agent.currentTask = null;
+  if (!skipQueue) {
+    processNextAgent(agent);
+  }
+  broadcastAgentStatus(agent);
+};
+
+const rejectPendingRequests = (agent, reason) => {
+  for (const pending of agent.pending.values()) {
+    if (pending.timer) clearTimeout(pending.timer);
+    pending.reject(new Error(reason));
+  }
+  agent.pending.clear();
+};
+
+const scheduleAgentRestart = (agent) => {
+  if (AGENT_RESTART_MS < 0) return;
+  if (agent.restartTimer) return;
+  const delay = Math.max(0, AGENT_RESTART_MS);
+  agent.restartTimer = setTimeout(() => {
+    agent.restartTimer = null;
+    spawnAgentProcess(agent);
+  }, delay);
+};
+
+const handleAgentExit = async (agent, reason) => {
+  if (agent.offline && agent.restartTimer) return;
+  agent.offline = true;
+  rejectPendingRequests(agent, reason);
+  agent.queue = [];
+  if (agent.currentTask) {
+    await failCurrentTask(agent, agent.currentTask, "代理已退出，任务已取消。", {
+      skipQueue: true,
+    });
+    scheduleAgentRestart(agent);
+    return;
+  }
+  agent.busy = false;
+  agent.currentTask = null;
+  broadcastAgentStatus(agent);
+  scheduleAgentRestart(agent);
+};
+
+const enqueueAgentPrompt = (agent, task) => {
+  if (agent.offline) {
+    void notifyTaskMessage(agent, task, "代理当前不可用，请稍后再试。");
+    return;
+  }
+  if (!task.id) {
+    task.id = randomUUID();
+  }
+  if (!Number.isFinite(task.subagentDepth)) {
+    task.subagentDepth = 0;
+  }
+  if (typeof task.text === "string") {
+    task.isSlashCommand = isSlashCommandText(task.text);
+  }
+  agent.queue.push(task);
+  processNextAgent(agent);
+  broadcastAgentStatus(agent);
+};
+
+const processNextAgent = async (agent) => {
+  if (agent.offline) return;
+  if (agent.busy || agent.queue.length === 0) return;
+  agent.busy = true;
+  agent.currentTask = agent.queue.shift();
+
+  const task = agent.currentTask;
+  if (TASK_TIMEOUT_MS > 0) {
+    task.timeoutTimer = setTimeout(() => {
+      void failCurrentTask(agent, task, "处理超时，已取消。", { skipQueue: agent.offline });
+    }, TASK_TIMEOUT_MS);
+  }
+  if (task.isSlashCommand && SLASH_COMMAND_TIMEOUT_MS > 0) {
+    task.slashCommandTimer = setTimeout(() => {
+      if (!task.agentStarted) {
+        completeCurrentTask(agent, task, { skipQueue: agent.offline });
+      }
+    }, SLASH_COMMAND_TIMEOUT_MS);
+  }
+
+  try {
+    if (task.onStart) {
+      await task.onStart();
+    }
+    const sessionFile = await ensureAgentSession(agent, task);
+    if (task.subagentRunId) {
+      const run = subagentRuns.get(task.subagentRunId);
+      if (run) {
+        run.sessionFile = sessionFile || agent.currentSessionFile || null;
+        run.updatedAt = new Date().toISOString();
+        subagentRuns.set(task.subagentRunId, run);
+        persistSubagentRuns();
+      }
+    }
+    const snapshot = await sendAgentRequest(agent, { type: "get_messages" }).catch(() => null);
+    task.baseMessageCount = snapshot?.data?.messages?.length ?? null;
+    const message = buildPromptText(task);
+    sendToPi(agent, { type: "prompt", message });
+  } catch (err) {
+    clearTaskTimeout(task);
+    console.error(`[loong] agent ${agent.id} session error: ${err.message}`);
+    agent.busy = false;
+    agent.currentTask = null;
+    processNextAgent(agent);
+  } finally {
+    broadcastAgentStatus(agent);
+  }
+};
+
+const buildPromptText = (task) => {
+  const text = task.text || "";
+  if (task.source === "imessage") {
+    if (task.isSlashCommand) return text;
+    const sender = task.sender || "unknown";
+    const prefix = `iMessage from ${sender}:\n`;
+    return `${prefix}${text}`;
+  }
+  return text;
+};
+
+const ensureAgentSession = async (agent, task) => {
+  if (task.forceNewSession && task.source !== "imessage") {
+    await sendAgentRequest(agent, { type: "new_session" });
+    const state = await sendAgentRequest(agent, { type: "get_state" });
+    let sessionFile = state?.data?.sessionFile ?? null;
+    if (sessionFile) {
+      const sessionInfo = createSessionPath(agent);
+      const relocateResult = relocateSessionFile(sessionFile, sessionInfo.sessionPath);
+      if (relocateResult.ok) {
+        sessionFile = sessionInfo.sessionPath;
+        upsertSessionIndexEntry(agent, sessionInfo);
+      }
+      agent.currentSessionFile = sessionFile;
+    }
+    return agent.currentSessionFile;
+  }
+  if (task.source !== "imessage" || !IMESSAGE_PER_CHAT) {
+    const state = await sendAgentRequest(agent, { type: "get_state" }).catch(() => null);
+    if (state?.data?.sessionFile) {
+      agent.currentSessionFile = state.data.sessionFile;
+    }
+    return agent.currentSessionFile;
+  }
+
+  const key = resolveIMessageKey(task);
+  let sessionFile = agent.imessageSessions.get(key) || null;
+
+  const switchToSession = async () => {
+    if (!sessionFile) return false;
+    if (agent.currentSessionFile && sessionFile === agent.currentSessionFile) return true;
+    const resp = await sendAgentRequest(agent, {
+      type: "switch_session",
+      sessionPath: sessionFile,
+    });
+    if (resp?.success === false) {
+      agent.imessageSessions.delete(key);
+      persistIMessageSessionMap(agent);
+      sessionFile = null;
+      return false;
+    }
+    agent.currentSessionFile = sessionFile;
+    return true;
+  };
+
+  if (sessionFile) {
+    const ok = await switchToSession();
+    if (ok) return sessionFile;
+  }
+
+  await sendAgentRequest(agent, { type: "new_session" });
+  const state = await sendAgentRequest(agent, { type: "get_state" });
+  sessionFile = state?.data?.sessionFile ?? null;
+  if (sessionFile) {
+    const sessionInfo = createSessionPath(agent);
+    const relocateResult = relocateSessionFile(sessionFile, sessionInfo.sessionPath);
+    if (relocateResult.ok) {
+      sessionFile = sessionInfo.sessionPath;
+      upsertSessionIndexEntry(agent, sessionInfo);
+    } else {
+      console.warn(
+        `[loong] failed to relocate session file for iMessage: ${relocateResult.error || "unknown error"}`,
+      );
+    }
+    agent.imessageSessions.set(key, sessionFile);
+    persistIMessageSessionMap(agent);
+    await switchToSession();
+  }
+
+  return sessionFile;
+};
+
+const sendIMessageMedia = async ({ media, chatId, sender }) => {
+  if (!imessageBridge) return;
+  const filePath = writeOutboundMediaFile(media);
+  if (!filePath) return;
+  const placeholder = resolveMediaPlaceholder(media.mimeType);
+  await imessageBridge.sendMessage({
+    text: placeholder,
+    file: filePath,
+    chatId,
+    to: sender,
+    service: IMESSAGE_SERVICE,
+    region: IMESSAGE_REGION,
+  });
+};
+
+const sendIMessageReply = async (agent, task, payload) => {
+  if (!imessageBridge || !task) return;
+  const messages = Array.isArray(payload?.messages) ? payload.messages : [];
+  const reply = extractAssistantText(messages);
+  const baseIndex = Number.isInteger(task.baseMessageCount) ? task.baseMessageCount : null;
+  const newMessages = baseIndex != null ? messages.slice(baseIndex) : messages;
+  const mediaItems = collectOutboundMedia(newMessages);
+  const chatId = task.chatId;
+  const sender = task.sender;
+
+  if (reply.trim()) {
+    await imessageBridge.sendMessage({
+      text: formatAgentReply(agent, reply),
+      chatId,
+      to: sender,
+      service: IMESSAGE_SERVICE,
+      region: IMESSAGE_REGION,
+    });
+  }
+
+  for (const media of mediaItems) {
+    try {
+      await sendIMessageMedia({ media, chatId, sender });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[loong] imessage media send failed: ${message}`);
+    }
+  }
+};
+
+const buildDirectReplyContext = (task) => {
+  if (!task) return null;
+  if (task.source === "imessage") {
+    if (task.chatId == null && !task.sender) return null;
+    return {
+      source: "imessage",
+      chatId: task.chatId ?? null,
+      sender: task.sender ?? null,
+    };
+  }
+  if (task.source === "web" && task.ws) {
+    return { source: "web", ws: task.ws };
+  }
+  return null;
+};
+
+const deliverSubagentDirectReply = async (agent, task, { replyText, payload } = {}) => {
+  const runId = task?.subagentRunId;
+  if (!runId) return false;
+  const directContext = subagentDirectReplies.get(runId);
+  if (!directContext) return false;
+  subagentDirectReplies.delete(runId);
+
+  const reply = typeof replyText === "string" ? replyText.trim() : "";
+  if (!reply) return false;
+
+  if (directContext.source === "imessage") {
+    try {
+      if (payload?.messages) {
+        await sendIMessageReply(
+          agent,
+          {
+            chatId: directContext.chatId,
+            sender: directContext.sender,
+          },
+          payload,
+        );
+      } else {
+        await safeNotify(
+          (text) =>
+            notifyIMessage({
+              text,
+              chatId: directContext.chatId,
+              sender: directContext.sender,
+            }),
+          formatAgentReply(agent, reply),
+        );
+      }
+      return true;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[loong] direct imessage reply failed: ${message}`);
+      return false;
+    }
+  }
+
+  if (directContext.source === "web" && directContext.ws) {
+    sendGatewayMessage(directContext.ws, formatAgentReply(agent, reply));
+    return true;
+  }
+
+  return false;
+};
+
+const handleAgentResponse = (agent, payload) => {
+  if (!payload || payload.type !== "response" || !payload.id) return false;
+  const pending = agent.pending.get(payload.id);
+  if (pending) {
+    if (pending.timer) clearTimeout(pending.timer);
+    agent.pending.delete(payload.id);
+    pending.resolve(payload);
+  }
+
+  if (payload.command === "get_state" && payload.success && payload.data?.sessionFile) {
+    agent.currentSessionFile = payload.data.sessionFile;
+  }
+  return !!pending;
+};
+
+const handleAgentEvent = (agent, payload) => {
+  if (!payload || typeof payload !== "object") return;
+
+  if (payload.type === "extension_ui_request") {
+    void handleExtensionUiRequest(agent, payload);
+    return;
+  }
+
+  if (payload.type === "agent_start") {
+    const task = agent.currentTask;
+    if (task) {
+      task.agentStarted = true;
+      clearSlashCommandTimer(task);
+    }
+    return;
+  }
+
+  if (payload.type === "turn_end") {
+    const task = agent.currentTask;
+    if (!task || task.aborted || !task.onReply || task.replySent) return;
+    const message = payload.message;
+    if (!message || message.role !== "assistant") return;
+    if (message.stopReason === "toolUse") return;
+    const reply = extractTextBlocks(message.content);
+    void deliverSubagentDirectReply(agent, task, { replyText: reply });
+    if (resolveTaskReply(task, reply)) {
+      completeCurrentTask(agent, task, { skipQueue: agent.offline });
+    }
+    return;
+  }
+
+  if (payload.type === "agent_end") {
+    const task = agent.currentTask;
+    clearTaskTimeout(task);
+    clearSlashCommandTimer(task);
+    if (task?.aborted) {
+      completeCurrentTask(agent, task, { skipQueue: agent.offline });
+      return;
+    }
+    const reply = extractAssistantText(payload.messages || []);
+
+    void deliverSubagentDirectReply(agent, task, { replyText: reply, payload });
+
+    // 处理等待回复的回调（api/subagent 等）
+    resolveTaskReply(task, reply);
+
+    if (task?.source === "imessage") {
+      (async () => {
+        try {
+          await sendIMessageReply(agent, task, payload);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.error(`[loong] imessage send failed: ${message}`);
+        } finally {
+          completeCurrentTask(agent, task, { skipQueue: agent.offline });
+        }
+      })();
+    } else {
+      completeCurrentTask(agent, task, { skipQueue: agent.offline });
+    }
+
+    if (reply.trim()) {
+      notifyBackgroundWebClients(agent, reply);
+    }
+  }
+};
+
+const notifyBackgroundWebClients = (agent, reply) => {
+  const text = formatAgentReply(agent, reply);
+  for (const client of clients) {
+    if (client.readyState !== WebSocket.OPEN) continue;
+    const context = webContexts.get(client);
+    if (context?.agentId === agent.id) continue;
+    client.send(JSON.stringify({ type: "gateway_message", text }));
+  }
+};
+
+const handleExtensionUiRequest = async (agent, payload) => {
+  if (!payload || payload.method !== "notify") return;
+  const message = typeof payload.message === "string" ? payload.message.trim() : "";
+  if (!message) return;
+
+  const formatted = formatAgentReply(agent, message);
+  const task = agent.currentTask;
+
+  if (task?.source === "imessage") {
+    await safeNotify(
+      (text) => notifyIMessage({ text, chatId: task.chatId, sender: task.sender }),
+      formatted,
+    );
+    if (task.isSlashCommand && !task.agentStarted) {
+      completeCurrentTask(agent, task, { skipQueue: agent.offline });
+    }
+    return;
+  }
+
+  if (task?.source === "web" && task.ws) {
+    sendGatewayMessage(task.ws, formatted);
+    if (task.isSlashCommand && !task.agentStarted) {
+      completeCurrentTask(agent, task, { skipQueue: agent.offline });
+    }
+    return;
+  }
+
+  for (const client of clients) {
+    if (client.readyState !== WebSocket.OPEN) continue;
+    const context = webContexts.get(client);
+    if (context?.agentId !== agent.id) continue;
+    client.send(JSON.stringify({ type: "gateway_message", text: formatted }));
+  }
+};
+
+const broadcastAgentStatus = (agent) => {
+  for (const client of clients) {
+    if (client.readyState !== WebSocket.OPEN) continue;
+    const context = webContexts.get(client);
+    if (context?.agentId !== agent.id) continue;
+    client.send(
+      JSON.stringify({
+        type: "gateway_agent_status",
+        agent: { id: agent.id, name: agent.name },
+        busy: agent.busy,
+        queueLength: agent.queue.length,
+      }),
+    );
+  }
+};
+
+const handleIMessageIncoming = async (message) => {
+  if (!message) return;
+  if (message.is_from_me) return;
+  const text = message.text?.trim();
+  if (!text) return;
+
+  const sender = message.sender ?? undefined;
+  if (!isAuthorized(sender)) {
+    console.log(`[loong] ignoring message from unauthorized sender: ${sender}`);
+    return;
+  }
+  const chatId = message.chat_id ?? undefined;
+  const sessionKey = resolveIMessageKey({ sender, chatId });
+  const context = imessageContexts.get(sessionKey);
+  const currentAgentId = context?.agentId || defaultAgentId;
+  const { agent, remainder, switched } = resolveAgentFromText(text, currentAgentId);
+  if (!agent) return;
+
+  if (switched) {
+    imessageContexts.set(sessionKey, { agentId: agent.id });
+  }
+
+  const trimmed = remainder.trim();
+  const respond = (replyText) => notifyIMessage({ text: replyText, chatId, sender });
+  if (!trimmed) {
+    await respond(`已切换到 ${agent.name}`);
+    return;
+  }
+
+  const command = resolveCommand(trimmed);
+  const handled = command
+    ? await handleGatewayCommand({
+        agent,
+        command,
+        respond: (replyText) => respond(replyText),
+        sendPrompt: (promptText) =>
+          enqueueAgentPrompt(agent, {
+            source: "imessage",
+            text: promptText,
+            sender,
+            chatId,
+            onStart: () => sendProcessingNotice(agent, { chatId, sender, text: promptText }),
+          }),
+        contextKey: sessionKey,
+      })
+    : false;
+  if (handled) return;
+
+  enqueueAgentPrompt(agent, {
+    source: "imessage",
+    text: trimmed,
+    sender,
+    chatId,
+    onStart: () => sendProcessingNotice(agent, { chatId, sender, text: trimmed }),
+  });
+};
+
+const sendProcessingNotice = async (agent, { chatId, sender, text }) => {
+  if (!agent.notifyOnStart) return;
+  const trimmed = typeof text === "string" ? text.trim() : "";
+  const hint = trimmed && isSlashCommandText(trimmed) ? `已收到命令 ${trimmed}` : "正在处理...";
+  await safeNotify(
+    (replyText) => notifyIMessage({ text: replyText, chatId, sender }),
+    `${resolveAgentLabel(agent)} ${hint}`,
+  );
+};
+
+let imessageBridge = null;
+const imessageContexts = new Map();
+
+const sendGatewayMessage = (ws, text) => {
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "gateway_message", text }));
+  }
+};
+
+const sendToPi = (agent, payload) => {
+  if (agent.offline) return;
+  try {
+    agent.pi.stdin.write(`${JSON.stringify(payload)}\n`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[loong] send to agent ${agent.id} failed: ${message}`);
+    void handleAgentExit(agent, `send error: ${message}`);
+  }
+};
+
+const sendAgentRequest = (agent, command, { timeoutMs = 10000 } = {}) => {
+  if (agent.offline) {
+    return Promise.reject(new Error(`agent ${agent.id} offline`));
+  }
+  const id = `${agent.id}-${++agent.requestId}`;
+  const payload = { ...command, id };
+  return new Promise((resolve, reject) => {
+    const timer = timeoutMs
+      ? setTimeout(() => {
+          agent.pending.delete(id);
+          reject(new Error(`pi RPC timeout (${command.type})`));
+        }, timeoutMs)
+      : undefined;
+    agent.pending.set(id, { resolve, reject, timer });
+    sendToPi(agent, payload);
+  });
+};
+
+const handleAgentLine = (agent, line) => {
+  const trimmed = line.trim();
+  if (!trimmed) return;
+
+  let payload;
+  let normalizedLine = trimmed;
+  try {
+    payload = JSON.parse(trimmed);
+  } catch (err) {
+    const braceIndex = trimmed.indexOf("{");
+    if (braceIndex > 0) {
+      const sliced = trimmed.slice(braceIndex);
+      try {
+        payload = JSON.parse(sliced);
+        normalizedLine = sliced;
+      } catch (innerErr) {
+        if (LOONG_DEBUG) {
+          const message = innerErr instanceof Error ? innerErr.message : String(innerErr);
+          console.warn(`[loong] failed to parse agent ${agent.id} output: ${message}`);
+        }
+      }
+    } else if (LOONG_DEBUG) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[loong] failed to parse agent ${agent.id} output: ${message}`);
+    }
+  }
+
+  if (payload) {
+    const handled = handleAgentResponse(agent, payload);
+    if (!handled) {
+      handleAgentEvent(agent, payload);
+    }
+  }
+
+  if (!payload) return;
+  for (const client of clients) {
+    if (client.readyState !== WebSocket.OPEN) continue;
+    const context = webContexts.get(client);
+    if (context?.agentId !== agent.id) continue;
+    client.send(normalizedLine);
+  }
+};
+
+const loadIMessageSessionMap = (agent) => {
+  if (!IMESSAGE_PER_CHAT) return;
+  if (!existsSync(agent.sessionMapFile)) return;
+  try {
+    const raw = readFileSync(agent.sessionMapFile, "utf8");
+    const parsed = JSON.parse(raw);
+    const entries = parsed?.entries ?? {};
+    for (const [key, value] of Object.entries(entries)) {
+      if (typeof value === "string" && value.trim()) {
+        agent.imessageSessions.set(key, value.trim());
+      }
+    }
+    if (agent.imessageSessions.size > 0) {
+      console.log(`[loong] loaded imessage sessions (${agent.id}): ${agent.imessageSessions.size}`);
+    }
+  } catch (err) {
+    console.error(`[loong] failed to load imessage session map: ${err.message}`);
+  }
+};
+
+const persistIMessageSessionMap = (agent) => {
+  if (!IMESSAGE_PER_CHAT) return;
+  try {
+    const payload = {
+      version: 1,
+      entries: Object.fromEntries(agent.imessageSessions.entries()),
+    };
+    mkdirSync(dirname(agent.sessionMapFile), { recursive: true });
+    writeFileSync(agent.sessionMapFile, JSON.stringify(payload, null, 2));
+  } catch (err) {
+    console.error(`[loong] failed to save imessage session map: ${err.message}`);
+  }
+};
+
+if (IMESSAGE_ENABLED) {
+  for (const agent of agents.values()) {
+    loadIMessageSessionMap(agent);
+  }
+  startIMessageBridge({
+    cliPath: IMESSAGE_CLI_PATH,
+    dbPath: IMESSAGE_DB_PATH,
+    runtime: console,
+    onMessage: handleIMessageIncoming,
+  })
+    .then(async (bridge) => {
+      imessageBridge = bridge;
+      await imessageBridge.subscribe({ attachments: IMESSAGE_ATTACHMENTS });
+      console.log("[loong] imessage bridge ready");
+    })
+    .catch((err) => {
+      console.error(`[loong] imessage bridge failed: ${err.message}`);
+    });
+}
+
+server.listen(PORT, () => {
+  console.log(`[loong] listening on http://localhost:${PORT}`);
+  console.log(`[loong] websocket ws://localhost:${PORT}/ws`);
+  console.log(`[loong] api notify: POST http://localhost:${PORT}/api/notify`);
+  console.log(`[loong] api ask: POST http://localhost:${PORT}/api/ask`);
+  console.log(`[loong] loong state: ${LOONG_STATE_DIR}`);
+  console.log(`[loong] agents: ${agentList.map((a) => a.id).join(", ")}`);
+  if (IMESSAGE_ENABLED) {
+    const modeLabel = IMESSAGE_ENABLED_ENV ? "explicit" : "auto";
+    console.log(
+      `[loong] imessage enabled (${modeLabel}, cli=${IMESSAGE_CLI_PATH}, db=${IMESSAGE_DB_PATH})`,
+    );
+  } else {
+    const reason = IMESSAGE_DISABLED_ENV
+      ? "disabled via IMESSAGE_ENABLED=0"
+      : IMESSAGE_AUTO && !IMESSAGE_DB_FOUND
+        ? `chat.db not found at ${IMESSAGE_DB_PATH}`
+        : "set IMESSAGE_ENABLED=1 or LOONG_IMESSAGE_AUTO=1 to enable";
+    console.log(`[loong] imessage disabled (${reason})`);
+  }
+});
+
+const readModelsConfig = () => {
+  if (!existsSync(PI_MODELS_PATH)) {
+    return { providers: {} };
+  }
+  try {
+    const raw = readFileSync(PI_MODELS_PATH, "utf8");
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") {
+      return { providers: {} };
+    }
+    return parsed;
+  } catch (err) {
+    console.warn(`[loong] failed to read models config: ${err.message}`);
+    return { providers: {} };
+  }
+};
+
+const writeModelsConfig = (config) => {
+  try {
+    mkdirSync(dirname(PI_MODELS_PATH), { recursive: true });
+    writeFileSync(PI_MODELS_PATH, JSON.stringify(config, null, 2));
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+};
+
+const formatProviderName = (id) =>
+  id
+    .replace(/[-_]+/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase())
+    .trim();
+
+const getBuiltinProviderCatalog = () => {
+  try {
+    const providers = getProviders();
+    return providers.map((providerId) => {
+      const models = getModels(providerId).map((model) => ({
+        id: model.id,
+        name: model.name || model.id,
+        provider: model.provider || providerId,
+        api: model.api,
+        baseUrl: model.baseUrl,
+        reasoning: model.reasoning ?? false,
+        input: model.input ?? ["text"],
+        contextWindow: model.contextWindow ?? null,
+        maxTokens: model.maxTokens ?? null,
+        cost: model.cost ?? null,
+        compat: model.compat ?? null,
+      }));
+      return {
+        id: providerId,
+        name: formatProviderName(providerId),
+        description: null,
+        models,
+      };
+    });
+  } catch (err) {
+    console.warn(`[loong] failed to load built-in providers: ${err.message}`);
+    return [];
+  }
+};
+
+const restartAgentProcesses = () => {
+  for (const agent of agents.values()) {
+    if (agent.pi && !agent.offline) {
+      try {
+        agent.pi.kill();
+      } catch (err) {
+        console.warn(`[loong] failed to restart agent ${agent.id}: ${err.message}`);
+      }
+    }
+  }
+};
+
+function loadGatewayConfig() {
+  const defaults = { ...DEFAULT_GATEWAY_CONFIG };
+  if (!existsSync(LOONG_CONFIG_PATH)) {
+    console.warn(`[loong] config not found at ${LOONG_CONFIG_PATH}, using defaults`);
+    return defaults;
+  }
+  try {
+    const raw = readFileSync(LOONG_CONFIG_PATH, "utf8");
+    const parsed = JSON.parse(raw);
+    return { ...defaults, ...parsed };
+  } catch (err) {
+    console.error(`[loong] failed to read config: ${err.message}`);
+    return defaults;
+  }
+}
+
+function initAgents(config) {
+  const agentConfigs = resolveAgentConfigs(config);
+  if (agentConfigs.length === 0) return null;
+
+  if (!validateAgentNames(agentConfigs)) {
+    return null;
+  }
+
+  for (const agentConfig of agentConfigs) {
+    const agent = createAgentRuntime(agentConfig);
+    agents.set(agent.id, agent);
+    const entry = {
+      id: agent.id,
+      name: agent.name,
+      keywords: agent.keywords,
+      pid: agent.pi?.pid,
+    };
+    agent.listEntry = entry;
+    agentList.push(entry);
+  }
+
+  const defaultId =
+    config.defaultAgent && agents.has(config.defaultAgent)
+      ? config.defaultAgent
+      : agentConfigs[0].id;
+
+  return defaultId;
+}
+
+function resolveAgentConfigs(config) {
+  const agentsDir = join(homedir(), ".pi", "agent", "agents");
+  const results = [];
+
+  if (!existsSync(agentsDir)) {
+    console.warn(`[loong] pi agents dir not found: ${agentsDir}`);
+    return results;
+  }
+
+  const entries = readdirSync(agentsDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isFile() && !entry.isSymbolicLink()) continue;
+    if (!entry.name.endsWith(".md")) continue;
+    const filePath = join(agentsDir, entry.name);
+    let raw;
+    try {
+      raw = readFileSync(filePath, "utf8");
+    } catch (err) {
+      console.error(`[loong] failed to read pi agent: ${filePath} (${err.message})`);
+      continue;
+    }
+    const { frontmatter, body } = parseFrontmatter(raw);
+    const name = typeof frontmatter?.name === "string" ? frontmatter.name.trim() : "";
+    const description =
+      typeof frontmatter?.description === "string" ? frontmatter.description.trim() : "";
+    if (!name || !description) {
+      console.warn(`[loong] pi agent missing name/description: ${filePath}`);
+      continue;
+    }
+
+    const keywords = normalizeStringList(frontmatter.keywords || frontmatter.keyword);
+    const tools = normalizeStringList(frontmatter.tools);
+    const skills = resolveSkills(frontmatter.skills, dirname(filePath));
+    const noSkills = normalizeBoolean(frontmatter.noSkills) ?? false;
+    const modelId = frontmatter.model ? String(frontmatter.model).trim() : null;
+    const provider = frontmatter.provider ? String(frontmatter.provider).trim() : null;
+    const thinkingLevel = frontmatter.thinkingLevel || frontmatter.thinking || null;
+    const workspaceOverride = frontmatter.workspace ? String(frontmatter.workspace).trim() : null;
+    const subagentsAllowAgents = normalizeStringList(
+      frontmatter.subagentsAllowAgents || frontmatter.subagentsAllow,
+    );
+    const subagentsMaxDepth = normalizeNumber(frontmatter.subagentsMaxDepth);
+
+    const agentConfig = {
+      id: name,
+      name,
+      keywords,
+      systemPrompt: body.trim() || null,
+      model: modelId || provider ? { modelId: modelId || null, provider: provider || null } : null,
+      thinkingLevel: thinkingLevel ? String(thinkingLevel).trim() : null,
+      tools,
+      skills,
+      noSkills: noSkills || null,
+      subagents: {
+        allowAgents: subagentsAllowAgents,
+        maxDepth: subagentsMaxDepth,
+      },
+      workspaceDir: workspaceOverride ? resolveWorkspaceDir(name, workspaceOverride) : null,
+      configDir: dirname(filePath),
+    };
+
+    const syntheticPath = join(LOONG_STATE_DIR, "agents", name, "agent.json");
+    const normalized = normalizeAgentConfig(agentConfig, syntheticPath, config);
+    if (normalized) results.push(normalized);
+  }
+
+  return results;
+}
+
+function normalizeAgentConfig(config, configPath, gatewayConfig) {
+  if (!config || typeof config !== "object") return null;
+  const configDir = config.configDir
+    ? resolveUserPath(config.configDir, dirname(configPath))
+    : dirname(configPath);
+  const id = config.id || basename(configDir);
+  const { nameZh, nameEn, displayName } = resolveAgentNames(config, id);
+  const keywordSeed =
+    Array.isArray(config.keywords) && config.keywords.length > 0 ? config.keywords : [];
+  const keywords = dedupeKeywords([...keywordSeed, nameZh, nameEn].filter(Boolean));
+  if (keywords.length === 0) {
+    keywords.push(id);
+  }
+  const workspaceDir = resolveWorkspaceDir(id, config.workspaceDir);
+  const memoryDir = join(workspaceDir, "memory");
+  const memoryIndexFile = join(workspaceDir, "MEMORY.md");
+  const memoryEnabled = config.memory?.enabled !== false;
+  const sessionRootDir = config.sessionRootDir
+    ? resolveUserPath(config.sessionRootDir, LOONG_SESSIONS_DIR)
+    : join(LOONG_SESSIONS_DIR, id);
+  const sessionDir = config.sessionDir
+    ? resolveUserPath(config.sessionDir, sessionRootDir)
+    : join(sessionRootDir, "transcripts");
+  const sessionIndexFile = config.sessionIndexFile
+    ? resolveUserPath(config.sessionIndexFile, sessionRootDir)
+    : join(sessionRootDir, "sessions.json");
+  const sessionMapFile = config.imessage?.sessionMapFile
+    ? resolveUserPath(config.imessage.sessionMapFile, LOONG_RUNTIME_CHANNELS_DIR)
+    : join(LOONG_RUNTIME_CHANNELS_DIR, "imessage", "session-map", `${id}.json`);
+
+  const systemPromptPath = config.systemPromptPath
+    ? resolve(configDir, config.systemPromptPath)
+    : null;
+  const appendSystemPromptPath = config.appendSystemPromptPath
+    ? resolve(configDir, config.appendSystemPromptPath)
+    : null;
+
+  return {
+    id,
+    name: displayName,
+    nameZh,
+    nameEn,
+    keywords,
+    configDir,
+    systemPrompt: config.systemPrompt || null,
+    systemPromptPath,
+    appendSystemPrompt: config.appendSystemPrompt || null,
+    appendSystemPromptPath,
+    model: config.model || null,
+    thinkingLevel: config.thinkingLevel || config.thinking || null,
+    tools: Array.isArray(config.tools) ? config.tools : null,
+    skills: Array.isArray(config.skills) ? config.skills : null,
+    noSkills: config.noSkills === true,
+    workspaceDir,
+    sessionRootDir,
+    sessionDir,
+    sessionIndexFile,
+    memoryDir,
+    memoryIndexFile,
+    memoryEnabled,
+    sessionMapFile,
+    subagents: {
+      allowAgents: config.subagents?.allowAgents ?? null,
+      maxDepth: config.subagents?.maxDepth ?? null,
+    },
+    notifyOnStart: config.notifyOnStart ?? gatewayConfig.notifyOnStart,
+    replyPrefixMode: config.replyPrefixMode || gatewayConfig.replyPrefixMode,
+  };
+}
+
+function spawnAgentProcess(runtime) {
+  if (runtime.rl) {
+    runtime.rl.removeAllListeners();
+    runtime.rl.close();
+  }
+
+  const pi = spawn(runtime.piCmd, runtime.spawnArgs, {
+    cwd: runtime.spawnCwd,
+    stdio: ["pipe", "pipe", "inherit"],
+    env: runtime.spawnEnv,
+  });
+
+  runtime.pi = pi;
+  runtime.offline = false;
+  if (runtime.listEntry) {
+    runtime.listEntry.pid = pi.pid;
+  }
+
+  const rl = createInterface({ input: pi.stdout });
+  runtime.rl = rl;
+  rl.on("line", (line) => handleAgentLine(runtime, line));
+
+  pi.on("exit", (code, signal) => {
+    const reason = `agent ${runtime.id} exited (code=${code}, signal=${signal})`;
+    console.error(`[loong] ${reason}`);
+    void handleAgentExit(runtime, reason);
+  });
+
+  pi.on("error", (err) => {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[loong] agent ${runtime.id} error: ${message}`);
+    void handleAgentExit(runtime, `agent error: ${message}`);
+  });
+
+  return pi;
+}
+
+function createAgentRuntime(config) {
+  if (config.workspaceDir) {
+    ensureWorkspaceScaffold({
+      workspaceDir: config.workspaceDir,
+      memoryIndexFile: config.memoryIndexFile,
+      memoryDir: config.memoryDir,
+    });
+  }
+  if (config.sessionRootDir) {
+    mkdirSync(config.sessionRootDir, { recursive: true });
+  }
+  mkdirSync(config.sessionDir, { recursive: true });
+  if (config.sessionIndexFile) {
+    mkdirSync(dirname(config.sessionIndexFile), { recursive: true });
+  }
+  if (config.memoryEnabled) {
+    mkdirSync(config.memoryDir, { recursive: true });
+  }
+
+  const args = [...piBaseArgs, "--mode", "rpc", "--session-dir", config.sessionDir];
+  const internalExtensions = resolveInternalExtensionPaths();
+  for (const extensionPath of internalExtensions) {
+    args.push("--extension", extensionPath);
+  }
+  if (config.systemPromptPath) {
+    args.push("--system-prompt", config.systemPromptPath);
+  } else if (config.systemPrompt) {
+    args.push("--system-prompt", config.systemPrompt);
+  }
+  if (config.appendSystemPromptPath) {
+    args.push("--append-system-prompt", config.appendSystemPromptPath);
+  } else if (config.appendSystemPrompt) {
+    args.push("--append-system-prompt", config.appendSystemPrompt);
+  }
+  if (config.model?.provider) {
+    args.push("--provider", config.model.provider);
+  }
+  if (config.model?.modelId) {
+    args.push("--model", config.model.modelId);
+  }
+  if (config.thinkingLevel) {
+    args.push("--thinking", config.thinkingLevel);
+  }
+  if (Array.isArray(config.tools)) {
+    if (config.tools.length === 0) {
+      args.push("--no-tools");
+    } else {
+      args.push("--tools", config.tools.join(","));
+    }
+  }
+  if (config.noSkills) {
+    args.push("--no-skills");
+  }
+  if (Array.isArray(config.skills) && config.skills.length > 0) {
+    for (const skill of config.skills) {
+      args.push("--skill", skill);
+    }
+  }
+
+  const runtime = {
+    id: config.id,
+    name: config.name,
+    keywords: config.keywords,
+    workspaceDir: config.workspaceDir,
+    sessionRootDir: config.sessionRootDir,
+    sessionDir: config.sessionDir,
+    sessionIndexFile: config.sessionIndexFile,
+    memoryDir: config.memoryDir,
+    memoryIndexFile: config.memoryIndexFile,
+    memoryEnabled: config.memoryEnabled,
+    sessionMapFile: config.sessionMapFile,
+    notifyOnStart: config.notifyOnStart,
+    replyPrefixMode: config.replyPrefixMode,
+    subagents: config.subagents || { allowAgents: null, maxDepth: null },
+    pi: null,
+    piCmd,
+    spawnArgs: args,
+    spawnCwd: config.workspaceDir || PI_CWD,
+    spawnEnv: {
+      ...process.env,
+      LOONG_AGENT_ID: config.id,
+      LOONG_PORT: String(PORT),
+    },
+    pending: new Map(),
+    requestId: 0,
+    currentSessionFile: null,
+    queue: [],
+    busy: false,
+    currentTask: null,
+    offline: false,
+    sessionCache: null,
+    restartTimer: null,
+    rl: null,
+    listEntry: null,
+    imessageSessions: new Map(),
+  };
+
+  spawnAgentProcess(runtime);
+
+  return runtime;
+}

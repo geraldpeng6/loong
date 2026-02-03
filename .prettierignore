@@ -1,0 +1,9 @@
+node_modules/
+coverage/
+dist/
+.pnpm-store/
+.pnpm-debug.log
+pnpm-lock.yaml
+server.log
+/tmp/
+templates/skills/**

@@ -1,0 +1,15 @@
+{
+  "name": "loong-server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "node src/server.js",
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "@mariozechner/pi-ai": "0.51.2",
+    "ws": "^8.18.0"
+  }
+}

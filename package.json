@@ -3,11 +3,55 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "workspaces": [
+    "apps/*"
+  ],
   "scripts": {
-    "start": "node src/server.js",
-    "test:integration": "node scripts/integration-test.js"
+    "dev": "pnpm -r --parallel dev",
+    "build": "pnpm -r build",
+    "start": "pnpm --filter loong-server start",
+    "test:integration": "node scripts/integration-test.js",
+    "setup:agents": "node scripts/bootstrap-agents.js",
+    "setup:skills": "node scripts/bootstrap-skills.js",
+    "create:agent": "node scripts/create-agent.js",
+    "create:skill": "node scripts/create-skill.js",
+    "check:pi": "which pi || (echo 'Error: pi is not installed. Run: npm install -g @mariozechner/pi-coding-agent' && exit 1)",
+    "lint": "eslint . --max-warnings=0",
+    "lint:fix": "eslint . --fix --max-warnings=0",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint-staged": "lint-staged",
+    "prepare": "husky install"
   },
-  "dependencies": {
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-react-hooks": "^4.6.2",
+    "eslint-plugin-react-refresh": "^0.4.12",
+    "husky": "^9.1.1",
+    "lint-staged": "^15.2.11",
+    "prettier": "^3.2.5",
     "ws": "^8.18.0"
+  },
+  "lint-staged": {
+    "apps/**/*.{js,jsx,ts,tsx,cjs,mjs}": [
+      "eslint --fix --max-warnings=0",
+      "prettier --write"
+    ],
+    "scripts/**/*.{js,jsx,ts,tsx,cjs,mjs}": [
+      "eslint --fix --max-warnings=0",
+      "prettier --write"
+    ],
+    "apps/**/*.{json,css,md,html,yaml,yml}": [
+      "prettier --write"
+    ],
+    "scripts/**/*.{json,css,md,html,yaml,yml}": [
+      "prettier --write"
+    ],
+    "*.{json,md,yaml,yml}": [
+      "prettier --write"
+    ]
   }
 }
