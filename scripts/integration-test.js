@@ -71,7 +71,7 @@ const serverEnv = {
   LOONG_AGENT_RESTART_MS: "-1",
 };
 
-const server = spawn("node", ["apps/server/src/server.js"], {
+const server = spawn("pnpm", ["--filter", "loong-server", "start"], {
   cwd: ROOT,
   env: serverEnv,
   stdio: ["ignore", "pipe", "pipe"],
@@ -154,6 +154,12 @@ const waitForWsClose = (ws, timeoutMs = 5000) =>
     ws.on("error", reject);
   });
 
+const sendWsRequest = async (ws, type, payload = {}, timeoutMs = 10000) => {
+  const id = `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  ws.send(JSON.stringify({ type, id, ...payload }));
+  return waitForWsMessage(ws, (msg) => msg.type === "response" && msg.id === id, timeoutMs);
+};
+
 const cleanup = async () => {
   if (server.exitCode === null && server.signalCode === null && !server.killed) {
     server.kill("SIGTERM");
@@ -198,6 +204,9 @@ try {
   const wsAuth = new WebSocket(`ws://localhost:${PORT}/ws?password=${PASSWORD}`);
   await waitForWsMessage(wsAuth, (msg) => msg.type === "gateway_ready");
 
+  const initialSessions = await sendWsRequest(wsAuth, "list_sessions");
+  assert.ok(Array.isArray(initialSessions?.data?.sessions));
+
   const notifyWaiter = waitForWsMessage(
     wsAuth,
     (msg) => msg.type === "gateway_message" && msg.text.includes("ping"),
@@ -214,8 +223,36 @@ try {
   assert.ok(notifyMsg.text);
 
   wsAuth.send(JSON.stringify({ type: "prompt", message: "hello" }));
-  const agentEnd = await waitForWsMessage(wsAuth, (msg) => msg.type === "agent_end");
+  const agentEnd = await waitForWsMessage(wsAuth, (msg) => msg.type === "agent_end", 15000);
   assert.ok(Array.isArray(agentEnd.messages));
+
+  const sessionsResp = await sendWsRequest(wsAuth, "list_sessions", { force: true });
+  const sessions = sessionsResp?.data?.sessions || [];
+  assert.ok(sessions.length >= 1);
+  const currentSession = sessions.find((entry) => entry.isCurrent) || sessions[0];
+  assert.ok(currentSession?.path);
+
+  const renameResp = await sendWsRequest(wsAuth, "rename_session", {
+    sessionPath: currentSession.path,
+    label: "renamed session",
+  });
+  assert.equal(renameResp.success, true);
+  const renamedPath = renameResp?.data?.sessionPath;
+  assert.ok(renamedPath);
+
+  wsAuth.send(JSON.stringify({ type: "prompt", message: "new hello" }));
+  const agentEndNew = await waitForWsMessage(wsAuth, (msg) => msg.type === "agent_end", 15000);
+  assert.ok(Array.isArray(agentEndNew.messages));
+
+  const sessionsAfterNew = await sendWsRequest(wsAuth, "list_sessions", { force: true });
+  const sessionsAfter = sessionsAfterNew?.data?.sessions || [];
+  assert.ok(sessionsAfter.length >= 2);
+
+  const deleteResp = await sendWsRequest(wsAuth, "delete_session", {
+    sessionPath: renamedPath,
+  });
+  assert.equal(deleteResp.success, true);
+
   wsAuth.close();
 
   console.log("Integration tests passed.");

@@ -3,13 +3,18 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "main": "src/server.js",
+  "main": "src/server.ts",
   "scripts": {
-    "dev": "node src/server.js",
-    "start": "node src/server.js"
+    "dev": "tsx src/server.ts",
+    "start": "tsx src/server.ts"
   },
   "dependencies": {
     "@mariozechner/pi-ai": "0.51.2",
     "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.12",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
   }
 }

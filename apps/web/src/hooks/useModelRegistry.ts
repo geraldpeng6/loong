@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import type { ModelsConfig, ProviderCatalog, ProviderConfig } from "@/types/modelRegistry";
+import { getAuthHeaders } from "@/lib/auth";
 
 export type ModelRegistryState = {
   catalog: ProviderCatalog[];
@@ -22,7 +23,9 @@ export const useModelRegistry = () => {
   const refresh = useCallback(async () => {
     setState((prev) => ({ ...prev, loading: true, error: null }));
     try {
-      const response = await fetch("/api/models/registry");
+      const response = await fetch("/api/models/registry", {
+        headers: getAuthHeaders(),
+      });
       if (!response.ok) {
         throw new Error(`Failed to load registry (${response.status})`);
       }
@@ -49,7 +52,7 @@ export const useModelRegistry = () => {
   const upsertProvider = useCallback(async (providerId: string, provider: ProviderConfig) => {
     const response = await fetch("/api/models/config", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...getAuthHeaders() },
       body: JSON.stringify({ providerId, provider }),
     });
     if (!response.ok) {

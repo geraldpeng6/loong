@@ -8,6 +8,7 @@ import type {
   ModelState,
   SessionEntry,
 } from "@/types/gateway";
+import { appendAuthQuery } from "@/lib/auth";
 
 export type GatewayStatus = "connecting" | "connected" | "disconnected";
 
@@ -188,6 +189,7 @@ export const useGateway = () => {
     setState((prev) => ({ ...prev, status: "connecting" }));
 
     const wsUrl = new URL("/ws", window.location.href);
+    appendAuthQuery(wsUrl);
     wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:";
     const connectionId = ++connectionIdRef.current;
     const ws = new WebSocket(wsUrl.toString());
