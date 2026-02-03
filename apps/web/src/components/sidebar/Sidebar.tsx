@@ -52,7 +52,7 @@ const Sidebar = ({
   return (
     <aside
       className={cn(
-        "flex h-full flex-col bg-background transition-all sm:bg-muted/30",
+        "flex h-full min-w-0 flex-col bg-background transition-all sm:bg-muted/30",
         collapsed ? "w-0 overflow-hidden" : widthClass,
       )}
     >

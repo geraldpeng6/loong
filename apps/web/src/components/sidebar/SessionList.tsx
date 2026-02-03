@@ -60,7 +60,7 @@ const SessionList = ({
           <div
             key={session.id}
             className={cn(
-              "flex min-w-0 items-center gap-2 rounded-lg border px-2 py-2 transition-colors",
+              "grid grid-cols-[1fr_auto] items-center gap-2 rounded-lg border px-2 py-2 transition-colors",
               isActive ? "border-foreground/40" : "border-transparent",
               !isActive && !isEditing && "hover:bg-muted/40",
               !isEditing && "cursor-pointer",
@@ -70,7 +70,7 @@ const SessionList = ({
               onSwitch(session.path);
             }}
           >
-            <div className="min-w-0 flex-1">
+            <div className="min-w-0 overflow-hidden">
               {isEditing ? (
                 <input
                   className={cn(
@@ -104,11 +104,11 @@ const SessionList = ({
                 {session.sizeText || ""}
               </div>
             </div>
-            <div className="flex flex-none items-center gap-1">
+            <div className="flex items-center gap-1">
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-7 w-7"
+                className="h-7 w-7 flex-shrink-0"
                 onClick={(event) => {
                   event.stopPropagation();
                   setEditingId(session.id);
@@ -119,7 +119,7 @@ const SessionList = ({
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-7 w-7 text-destructive"
+                className="h-7 w-7 flex-shrink-0 text-destructive"
                 onClick={(event) => {
                   event.stopPropagation();
                   onDelete(session);
