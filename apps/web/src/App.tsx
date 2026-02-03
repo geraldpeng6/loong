@@ -180,6 +180,9 @@ const App = () => {
                 onDeleteSession={handleDelete}
                 collapsed={false}
                 widthClassName="w-full"
+                status={state.status}
+                theme={theme}
+                onToggleTheme={toggleTheme}
               />
             </div>
           </>
@@ -194,16 +197,16 @@ const App = () => {
             onDeleteSession={handleDelete}
             collapsed={sidebarCollapsed}
             widthClassName="w-64"
+            status={state.status}
+            theme={theme}
+            onToggleTheme={toggleTheme}
           />
         )}
         <div className="flex flex-1 flex-col">
           <Header
-            status={state.status}
             busy={state.busy}
             onToggleSidebar={toggleSidebar}
             sidebarCollapsed={sidebarIsCollapsed}
-            theme={theme}
-            onToggleTheme={toggleTheme}
             agentSelector={
               <AgentSelector
                 agents={state.agents}
