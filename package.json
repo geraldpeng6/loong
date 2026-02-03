@@ -12,6 +12,7 @@
     "start": "pnpm --filter loong-server start",
     "test:integration": "node scripts/integration-test.js",
     "setup:agents": "node scripts/bootstrap-agents.js",
+    "setup:workspaces": "node scripts/bootstrap-workspaces.js",
     "setup:skills": "node scripts/bootstrap-skills.js",
     "create:agent": "node scripts/create-agent.js",
     "create:skill": "node scripts/create-skill.js",

@@ -60,7 +60,7 @@ const SessionList = ({
           <div
             key={session.id}
             className={cn(
-              "flex min-w-0 items-center justify-between gap-2 rounded-lg border px-2 py-2 transition-colors",
+              "flex min-w-0 items-center gap-2 overflow-hidden rounded-lg border px-2 py-2 transition-colors",
               isActive ? "border-foreground/40" : "border-transparent",
               !isActive && !isEditing && "hover:bg-muted/40",
               !isEditing && "cursor-pointer",
@@ -70,7 +70,7 @@ const SessionList = ({
               onSwitch(session.path);
             }}
           >
-            <div className="flex min-w-0 flex-1 flex-col gap-1 text-left text-xs">
+            <div className="flex min-w-0 flex-1 flex-col gap-1 overflow-hidden text-left text-xs">
               {isEditing ? (
                 <input
                   className={cn(
@@ -93,11 +93,15 @@ const SessionList = ({
                   autoFocus
                 />
               ) : (
-                <div className="truncate font-medium">{session.name || session.id}</div>
+                <div className="truncate font-medium" title={session.name || session.id}>
+                  {session.name || session.id}
+                </div>
               )}
-              <div className={cn("text-[10px]", sizeTextClass)}>{session.sizeText || ""}</div>
+              <div className={cn("truncate text-[10px]", sizeTextClass)}>
+                {session.sizeText || ""}
+              </div>
             </div>
-            <div className="flex flex-shrink-0 items-center gap-1">
+            <div className="ml-auto flex flex-shrink-0 items-center gap-1">
               <Button
                 variant="ghost"
                 size="icon"
