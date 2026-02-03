@@ -60,7 +60,7 @@ const SessionList = ({
           <div
             key={session.id}
             className={cn(
-              "flex min-w-0 items-center gap-2 overflow-hidden rounded-lg border px-2 py-2 transition-colors",
+              "group flex min-w-0 items-center gap-2 overflow-hidden rounded-lg border px-2 py-2 transition-colors",
               isActive ? "border-foreground/40" : "border-transparent",
               !isActive && !isEditing && "hover:bg-muted/40",
               !isEditing && "cursor-pointer",
@@ -70,7 +70,10 @@ const SessionList = ({
               onSwitch(session.path);
             }}
           >
-            <div className="flex min-w-0 flex-1 flex-col gap-1 overflow-hidden text-left text-xs">
+            <div
+              className="flex min-w-0 flex-1 flex-col gap-1 overflow-hidden text-left text-xs"
+              style={{ maxWidth: "calc(100% - 72px)" }}
+            >
               {isEditing ? (
                 <input
                   className={cn(
@@ -101,11 +104,14 @@ const SessionList = ({
                 {session.sizeText || ""}
               </div>
             </div>
-            <div className="ml-auto flex flex-shrink-0 items-center gap-1">
+            <div
+              className="ml-auto flex flex-shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100"
+              style={{ minWidth: "64px" }}
+            >
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-7 w-7"
+                className="h-7 w-7 flex-shrink-0"
                 onClick={(event) => {
                   event.stopPropagation();
                   setEditingId(session.id);
@@ -116,7 +122,7 @@ const SessionList = ({
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-7 w-7 text-destructive"
+                className="h-7 w-7 flex-shrink-0 text-destructive"
                 onClick={(event) => {
                   event.stopPropagation();
                   onDelete(session);
