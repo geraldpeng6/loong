@@ -228,7 +228,7 @@ const ModelSelector = ({
           disabled={quickDisabled}
         >
           <SelectTrigger
-            className="h-8 w-auto max-w-[240px] min-w-0 border-none bg-transparent px-0 py-0 text-sm font-medium shadow-none focus:ring-0 focus:ring-offset-0"
+            className="h-8 w-auto max-w-[160px] min-w-0 border-none bg-transparent px-0 py-0 text-xs font-medium shadow-none focus:ring-0 focus:ring-offset-0 sm:max-w-[240px] sm:text-sm"
             aria-label="Select model"
           >
             <SelectValue placeholder="Select model" className="truncate" />
@@ -238,7 +238,7 @@ const ModelSelector = ({
             align="start"
             sideOffset={4}
             avoidCollisions={false}
-            className="min-w-[240px]"
+            className="min-w-[200px] sm:min-w-[240px]"
           >
             {quickModels.map((model) => (
               <SelectItem key={model.id} value={model.id} className="cursor-pointer">

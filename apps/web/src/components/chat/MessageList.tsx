@@ -22,8 +22,8 @@ const MessageList = ({ messages, forkMessages, streamingAssistant, onFork }: Mes
   let userIndex = 0;
 
   return (
-    <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-6">
-      <div className="mx-auto flex w-full max-w-4xl flex-col gap-6">
+    <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-5 sm:px-6 sm:py-6">
+      <div className="mx-auto flex w-full max-w-4xl flex-col gap-4 sm:gap-6">
         {messages.map((message, index) => {
           let forkEntryId: string | null = null;
           if (message.role === "user" || message.role === "user-with-attachments") {

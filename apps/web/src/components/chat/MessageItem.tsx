@@ -39,7 +39,7 @@ const MessageItem = ({ message, forkEntryId, onFork }: MessageItemProps) => {
       <div
         className={cn(
           "flex flex-col gap-2 py-3",
-          isUser ? "max-w-[70%] items-end" : "max-w-full items-start",
+          isUser ? "max-w-[85%] items-end sm:max-w-[70%]" : "max-w-full items-start",
         )}
       >
         <div

@@ -23,6 +23,7 @@ export type SidebarProps = {
   onRenameSession: (session: SessionEntry, label: string) => void;
   onDeleteSession: (session: SessionEntry) => void;
   collapsed: boolean;
+  widthClassName?: string;
 };
 
 const DEFAULT_AGENT_IMAGE = "/agents/wuming.png";
@@ -44,6 +45,7 @@ const Sidebar = ({
   onRenameSession,
   onDeleteSession,
   collapsed,
+  widthClassName,
 }: SidebarProps) => {
   const currentAgent = useMemo(
     () => agents.find((agent) => agent.id === currentAgentId) || agents[0],
@@ -56,14 +58,16 @@ const Sidebar = ({
     event.currentTarget.src = DEFAULT_AGENT_IMAGE;
   };
 
+  const widthClass = widthClassName || "w-64";
+
   return (
     <aside
       className={cn(
-        "flex h-full w-64 flex-col bg-muted/30 transition-all",
-        collapsed ? "w-0 overflow-hidden" : "w-64",
+        "flex h-full flex-col bg-muted/30 transition-all",
+        collapsed ? "w-0 overflow-hidden" : widthClass,
       )}
     >
-      <div className="flex items-center gap-2 px-4 py-3">
+      <div className="flex items-center gap-2 px-3 py-3 sm:px-4">
         <Select
           value={currentAgent?.id || ""}
           onValueChange={onAgentChange}
@@ -85,7 +89,7 @@ const Sidebar = ({
             align="start"
             sideOffset={4}
             avoidCollisions={false}
-            className="min-w-[220px]"
+            className="min-w-[220px] bg-background/95 shadow-lg backdrop-blur"
           >
             {agents.map((agent) => {
               const imageSrc = resolveAgentImage(agent.id);
@@ -127,7 +131,7 @@ const Sidebar = ({
           </Tooltip>
         </div>
       </div>
-      <ScrollArea className="flex-1 px-3 py-3">
+      <ScrollArea className="flex-1 px-2 py-3 sm:px-3">
         <SessionList
           sessions={sessions}
           currentSessionPath={currentSessionPath}

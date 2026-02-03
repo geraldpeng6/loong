@@ -37,7 +37,7 @@ const Header = ({
         : "text-muted-foreground";
 
   return (
-    <header className="flex h-14 items-center justify-between bg-background px-4">
+    <header className="flex h-14 items-center justify-between bg-background px-3 sm:px-4">
       <div className="flex min-w-0 items-center gap-3">
         <Button variant="ghost" size="icon" onClick={onToggleSidebar} aria-label="Toggle sidebar">
           {sidebarCollapsed ? (
