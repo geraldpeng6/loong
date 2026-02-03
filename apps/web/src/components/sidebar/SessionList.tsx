@@ -55,13 +55,13 @@ const SessionList = ({
       {sessions.map((session) => {
         const isActive = session.isCurrent || session.path === currentSessionPath;
         const isEditing = editingId === session.id;
-        const sizeTextClass = isActive ? "text-muted/70" : "text-muted-foreground";
+        const sizeTextClass = "text-muted-foreground";
         return (
           <div
             key={session.id}
             className={cn(
-              "flex min-w-0 items-center justify-between gap-2 rounded-lg px-2 py-2 transition-colors",
-              isActive ? "bg-muted/40" : "bg-transparent",
+              "flex min-w-0 items-center justify-between gap-2 rounded-lg border px-2 py-2 transition-colors",
+              isActive ? "border-foreground/40" : "border-transparent",
               !isActive && !isEditing && "hover:bg-muted/40",
               !isEditing && "cursor-pointer",
             )}
