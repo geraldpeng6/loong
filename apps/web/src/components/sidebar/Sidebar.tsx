@@ -59,29 +59,43 @@ const Sidebar = ({
   };
 
   const widthClass = widthClassName || "w-64";
+  const isCollapsed = collapsed;
+  const effectiveWidthClass = isCollapsed ? "w-14" : widthClass;
 
   return (
     <aside
       className={cn(
         "flex h-full flex-col bg-muted/30 transition-all",
-        collapsed ? "w-0 overflow-hidden" : widthClass,
+        isCollapsed ? `overflow-hidden ${effectiveWidthClass}` : effectiveWidthClass,
       )}
     >
-      <div className="flex items-center gap-2 px-3 py-3 sm:px-4">
+      <div
+        className={cn("flex items-center gap-2 px-3 py-3 sm:px-4", isCollapsed && "justify-center")}
+      >
         <Select
           value={currentAgent?.id || ""}
           onValueChange={onAgentChange}
           disabled={agents.length === 0}
         >
-          <SelectTrigger className="h-10 flex-1 justify-between gap-3 px-2 text-xs">
-            <div className="flex min-w-0 items-center gap-3">
+          <SelectTrigger
+            className={cn(
+              "h-10 flex-1 justify-between gap-3 px-2 text-xs",
+              isCollapsed && "h-10 w-10 flex-none justify-center px-0",
+            )}
+            aria-label="Select agent"
+          >
+            <div className={cn("flex min-w-0 items-center gap-3", isCollapsed && "gap-0")}>
               <img
                 src={resolveAgentImage(currentAgent?.id)}
                 alt={agentLabel}
                 className="h-9 w-9 rounded-md object-cover"
                 onError={handleImageError}
               />
-              <span className="truncate text-xs font-semibold">{agentLabel}</span>
+              {isCollapsed ? (
+                <span className="sr-only">{agentLabel}</span>
+              ) : (
+                <span className="truncate text-xs font-semibold">{agentLabel}</span>
+              )}
             </div>
           </SelectTrigger>
           <SelectContent
@@ -112,34 +126,38 @@ const Sidebar = ({
             ) : null}
           </SelectContent>
         </Select>
-        <div className="flex flex-shrink-0 items-center gap-1">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon" onClick={onNewSession}>
-                <PlusIcon size={16} />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>New session</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon" onClick={onRefreshSessions}>
-                <RefreshIcon size={16} />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Refresh</TooltipContent>
-          </Tooltip>
-        </div>
+        {!isCollapsed ? (
+          <div className="flex flex-shrink-0 items-center gap-1">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="icon" onClick={onNewSession}>
+                  <PlusIcon size={16} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>New session</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="icon" onClick={onRefreshSessions}>
+                  <RefreshIcon size={16} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Refresh</TooltipContent>
+            </Tooltip>
+          </div>
+        ) : null}
       </div>
-      <ScrollArea className="flex-1 px-2 py-3 sm:px-3">
-        <SessionList
-          sessions={sessions}
-          currentSessionPath={currentSessionPath}
-          onSwitch={onSwitchSession}
-          onRename={onRenameSession}
-          onDelete={onDeleteSession}
-        />
-      </ScrollArea>
+      {!isCollapsed ? (
+        <ScrollArea className="flex-1 px-2 py-3 sm:px-3">
+          <SessionList
+            sessions={sessions}
+            currentSessionPath={currentSessionPath}
+            onSwitch={onSwitchSession}
+            onRename={onRenameSession}
+            onDelete={onDeleteSession}
+          />
+        </ScrollArea>
+      ) : null}
     </aside>
   );
 };

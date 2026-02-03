@@ -39,7 +39,13 @@ const Header = ({
   return (
     <header className="flex h-14 items-center justify-between bg-background px-3 sm:px-4">
       <div className="flex min-w-0 items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={onToggleSidebar} aria-label="Toggle sidebar">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          onClick={onToggleSidebar}
+          aria-label="Toggle sidebar"
+        >
           {sidebarCollapsed ? (
             <ArrowNarrowRightIcon size={16} />
           ) : (
@@ -50,11 +56,19 @@ const Header = ({
         {modelSelector ? <div className="min-w-0">{modelSelector}</div> : null}
       </div>
       <div className="flex items-center gap-2">
-        <Button variant="ghost" size="icon" aria-label="Toggle theme" onClick={onToggleTheme}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          aria-label="Toggle theme"
+          onClick={onToggleTheme}
+        >
           {theme === "dark" ? <BrightnessDownIcon size={16} /> : <MoonIcon size={16} />}
         </Button>
-        <PlugConnectedIcon className={cn(statusClass)} size={18} />
-        <span className="text-xs font-semibold tracking-[0.4em] text-muted-foreground">LOONG</span>
+        <PlugConnectedIcon className={cn(statusClass)} size={16} />
+        <span className="text-xs font-semibold tracking-[0.4em] text-muted-foreground leading-none">
+          LOONG
+        </span>
       </div>
     </header>
   );
