@@ -118,6 +118,7 @@ export const useGateway = () => {
               ? attachments.map((att) => ({
                   mimeType: att.mimeType,
                   fileName: att.fileName,
+                  url: att.url,
                 }))
               : undefined,
           },

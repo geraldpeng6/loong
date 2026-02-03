@@ -28,7 +28,7 @@ export const extractAttachments = (message: GatewayMessage): AttachmentItem[] =>
   const items: AttachmentItem[] = [];
   if (Array.isArray(message.attachments)) {
     for (const attachment of message.attachments) {
-      if (!attachment?.content) continue;
+      if (!attachment?.content && !attachment?.url) continue;
       const mimeType = attachment.mimeType || "application/octet-stream";
       const kind = mimeType.startsWith("image/")
         ? "image"
@@ -40,7 +40,7 @@ export const extractAttachments = (message: GatewayMessage): AttachmentItem[] =>
       items.push({
         kind,
         mimeType,
-        data: attachment.content,
+        data: attachment.content || null,
         fileName: attachment.fileName || "attachment",
         preview: attachment.preview || null,
         url: attachment.url || null,
