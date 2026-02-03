@@ -69,9 +69,7 @@ const Sidebar = ({
         isCollapsed ? `overflow-hidden ${effectiveWidthClass}` : effectiveWidthClass,
       )}
     >
-      <div
-        className={cn("flex h-14 items-center gap-2 px-3 sm:px-4", isCollapsed && "justify-center")}
-      >
+      <div className="flex h-14 items-center gap-2 px-3 sm:px-4">
         <Select
           value={currentAgent?.id || ""}
           onValueChange={onAgentChange}
