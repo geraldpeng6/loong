@@ -94,6 +94,22 @@ export const useGateway = () => {
     sendRequest("list_sessions");
   }, [sendRequest]);
 
+  const appendSystemMessage = useCallback((text: string) => {
+    const message = typeof text === "string" ? text.trim() : "";
+    if (!message) return;
+    setState((prev) => ({
+      ...prev,
+      messages: [
+        ...prev.messages,
+        {
+          role: "system",
+          content: message,
+          timestamp: Date.now(),
+        },
+      ],
+    }));
+  }, []);
+
   const refreshSessions = useCallback(() => {
     sendRequest("list_sessions");
   }, [sendRequest]);
@@ -268,6 +284,13 @@ export const useGateway = () => {
         return;
       }
 
+      if (payloadType === "error") {
+        const errorText =
+          typeof payload.error === "string" ? payload.error : "请求失败，请检查配置。";
+        appendSystemMessage(errorText);
+        return;
+      }
+
       if (payloadType === "gateway_ready") {
         const agents = Array.isArray(payload.agents) ? (payload.agents as GatewayAgent[]) : [];
         const activeId =
@@ -298,6 +321,7 @@ export const useGateway = () => {
           command?: string;
           success?: boolean;
           data?: Record<string, unknown>;
+          error?: string;
         };
         const { id, command, success, data } = response;
         if (!id || !command) {
@@ -308,6 +332,12 @@ export const useGateway = () => {
           return;
         }
         pendingRequestsRef.current.delete(id);
+
+        if (success === false) {
+          const errorText = response.error || "请求失败";
+          appendSystemMessage(`命令 ${command} 失败：${errorText}`);
+          return;
+        }
 
         if (command === "get_messages" && success) {
           const messages = Array.isArray(data?.messages)
@@ -489,6 +519,17 @@ export const useGateway = () => {
             messages: [...prev.messages, message],
             streamingAssistant: null,
           }));
+
+          const errorMessage =
+            typeof (message as { errorMessage?: string })?.errorMessage === "string"
+              ? (message as { errorMessage?: string }).errorMessage
+              : typeof (message as { error?: { message?: string } })?.error?.message === "string"
+                ? (message as { error?: { message?: string } }).error?.message
+                : null;
+          const stopReason = (message as { stopReason?: string })?.stopReason;
+          if (stopReason === "error" || errorMessage) {
+            appendSystemMessage(errorMessage || "模型调用失败，请检查 API Key 或模型配置。");
+          }
         }
         return;
       }
@@ -498,7 +539,7 @@ export const useGateway = () => {
         sendRequest("list_sessions");
       }
     });
-  }, [refreshSessionState, sendRequest]);
+  }, [appendSystemMessage, refreshSessionState, sendRequest]);
 
   const reconnect = useCallback(() => {
     if (!shouldReconnectRef.current) return;
