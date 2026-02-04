@@ -1,4 +1,5 @@
-import { mkdirSync } from "fs";
+import { mkdirSync, readdirSync, statSync, unlinkSync } from "fs";
+import { join } from "path";
 import { startIMessageBridge } from "../../imessage.js";
 import { createIMessageOutbound } from "./outbound.js";
 import { createIMessageInbound } from "./inbound.js";
@@ -65,6 +66,8 @@ export interface CreateIMessageChannelOptions {
   region?: string;
   allowlist?: string[];
   outboundDir?: string;
+  outboundCleanupIntervalMs?: number;
+  outboundMaxAgeMs?: number;
   defaultAgentId?: string;
   isSlashCommandText?: (text: string) => boolean;
   resolveAgentLabel?: (agent: AgentRuntime) => string;
@@ -86,6 +89,8 @@ export const createIMessageChannel = ({
   region = "US",
   allowlist = [],
   outboundDir,
+  outboundCleanupIntervalMs,
+  outboundMaxAgeMs,
   defaultAgentId,
   isSlashCommandText,
   resolveAgentLabel,
@@ -101,6 +106,43 @@ export const createIMessageChannel = ({
     gateway;
 
   let bridge: IMessageBridge | null = null;
+  let cleanupTimer: NodeJS.Timeout | null = null;
+
+  const cleanupOutboundDir = () => {
+    if (!outboundDir) return;
+    if (!outboundMaxAgeMs || outboundMaxAgeMs <= 0) return;
+
+    try {
+      const now = Date.now();
+      const entries = readdirSync(outboundDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isFile()) continue;
+        const filePath = join(outboundDir, entry.name);
+        const stat = statSync(filePath);
+        if (now - stat.mtimeMs > outboundMaxAgeMs) {
+          unlinkSync(filePath);
+        }
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.warn?.(`[loong] imessage outbound cleanup failed: ${message}`);
+    }
+  };
+
+  const scheduleCleanup = () => {
+    if (!outboundDir) return;
+    if (!outboundCleanupIntervalMs || outboundCleanupIntervalMs <= 0) return;
+    if (!outboundMaxAgeMs || outboundMaxAgeMs <= 0) return;
+    if (cleanupTimer) return;
+    cleanupOutboundDir();
+    cleanupTimer = setInterval(cleanupOutboundDir, outboundCleanupIntervalMs);
+  };
+
+  const stopCleanup = () => {
+    if (!cleanupTimer) return;
+    clearInterval(cleanupTimer);
+    cleanupTimer = null;
+  };
 
   const ensureOutboundDir = () => {
     if (!outboundDir) return;
@@ -139,6 +181,7 @@ export const createIMessageChannel = ({
   const start = async () => {
     if (!enabled) return null;
     ensureOutboundDir();
+    scheduleCleanup();
     bridge = await startIMessageBridge({
       cliPath,
       dbPath,
@@ -150,6 +193,7 @@ export const createIMessageChannel = ({
   };
 
   const stop = async () => {
+    stopCleanup();
     if (!bridge) return;
     await bridge.stop();
     bridge = null;

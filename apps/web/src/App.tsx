@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type TouchEvent } from "react";
 
 import Header from "@/components/layout/Header";
 import Sidebar from "@/components/sidebar/Sidebar";
+import ExtensionsPanel from "@/features/extensions/ExtensionsPanel";
 import MessageList from "@/components/chat/MessageList";
 import Composer from "@/components/chat/Composer";
 import ModelSelector from "@/components/model/ModelSelector";
@@ -210,6 +211,7 @@ const App = () => {
         <div className="flex flex-1 flex-col">
           <Header
             busy={state.busy}
+            actions={<ExtensionsPanel />}
             agentSelector={
               <AgentSelector
                 agents={state.agents}

@@ -14,14 +14,23 @@ export const createInternalExtensionsResolver = ({
   baseDir,
   resolveUserPath,
   env = process.env,
+  extraExtensions = [],
 }: {
   baseDir: string;
   resolveUserPath: (value: unknown, baseDir?: string) => string;
   env?: NodeJS.ProcessEnv;
+  extraExtensions?: string[];
 }) => {
   const disabled = parseEnvFlag(env.LOONG_INTERNAL_EXTENSIONS_DISABLED);
   const envList = parseEnvList(env.LOONG_INTERNAL_EXTENSIONS);
-  const defaultExtensions = [resolve(baseDir, "..", "extensions", "subagent-spawn.ts")];
+  const resolvedExtras = extraExtensions
+    .map((entry) => resolveUserPath(entry, baseDir))
+    .filter(Boolean);
+
+  const defaultExtensions = [
+    resolve(baseDir, "..", "extensions", "subagent-spawn.ts"),
+    ...resolvedExtras,
+  ];
 
   return () => {
     if (disabled) return [];

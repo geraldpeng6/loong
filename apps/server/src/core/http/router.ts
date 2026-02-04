@@ -3,11 +3,11 @@ import { readBody } from "./utils.js";
 import { createHealthRoute } from "./routes/health.js";
 import { createModelsRoutes } from "./routes/models.js";
 import { createNotifyRoute } from "./routes/notify.js";
-import { createPipelineRoute } from "./routes/pipeline.js";
 import { createSubagentsRoute } from "./routes/subagents.js";
 import { createAskRoute } from "./routes/ask.js";
 import { createStaticRoute } from "./routes/static.js";
 import { createUploadRoute } from "./routes/upload.js";
+import type { RouteHandler } from "./types.js";
 import type { FileStorageService, FileUploadConfig } from "../files/types.js";
 import type { AttachmentReference } from "../files/types.js";
 
@@ -53,13 +53,7 @@ export interface CreateHttpRouterOptions {
   getBuiltinProviderCatalog: () => unknown;
   modelsPath: string;
   restartAgentProcesses: () => void;
-  runImgPipelineQuery: (payload: Record<string, unknown>) => Promise<unknown>;
-  normalizeStringList: (value: unknown) => string[];
-  resolveUserPath: (value: unknown, baseDir?: string) => string;
-  guessMimeType: (fileName: string) => string;
-  imgPipelineMaxTop: number;
-  imgPipelineMaxBytes: number;
-  imgPipelineMaxTotalBytes: number;
+  extraRoutes?: RouteHandler[];
   subagentRuns: Map<string, unknown>;
   subagentDirectReplies: Map<string, unknown>;
   persistSubagentRuns: () => void;
@@ -89,13 +83,7 @@ export const createHttpRouter = ({
   getBuiltinProviderCatalog,
   modelsPath,
   restartAgentProcesses,
-  runImgPipelineQuery,
-  normalizeStringList,
-  resolveUserPath,
-  guessMimeType,
-  imgPipelineMaxTop,
-  imgPipelineMaxBytes,
-  imgPipelineMaxTotalBytes,
+  extraRoutes = [],
   subagentRuns,
   subagentDirectReplies,
   persistSubagentRuns,
@@ -124,17 +112,6 @@ export const createHttpRouter = ({
     agents,
     getWebChannel,
     formatAgentReply,
-  });
-  const pipelineRoute = createPipelineRoute({
-    notifyLocalOnly,
-    readBody: readRequestBody,
-    runImgPipelineQuery,
-    normalizeStringList,
-    resolveUserPath,
-    guessMimeType,
-    imgPipelineMaxTop,
-    imgPipelineMaxBytes,
-    imgPipelineMaxTotalBytes,
   });
   const subagentsRoute = createSubagentsRoute({
     notifyLocalOnly,
@@ -173,10 +150,10 @@ export const createHttpRouter = ({
     healthRoute,
     modelsRoute,
     notifyRoute,
-    pipelineRoute,
     subagentsRoute,
     askRoute,
     uploadRoute,
+    ...extraRoutes,
     staticRoute,
   ].filter(Boolean);
 

@@ -11,11 +11,11 @@ import { createPublicFileResolver } from "./core/http/static.js";
 import { createHttpRouter } from "./core/http/router.js";
 import { createModelsConfigStore } from "./core/models/config.js";
 import { getBuiltinProviderCatalog } from "./core/models/catalog.js";
-import { createImgPipelineQuery, guessMimeType } from "./core/pipeline/query.js";
 import { createSubagentStore } from "./core/subagents/store.js";
 import { createDirectReplyHandler } from "./core/subagents/direct-reply.js";
-import { normalizeStringList } from "./core/utils/normalize.js";
 import { resolveUserPath } from "./core/utils/paths.js";
+import { initImgPipelineFeature } from "./features/img-pipeline/index.js";
+import { initAudioPipelineFeature } from "./features/audio-pipeline/index.js";
 import { createAgentConfigLoader } from "./core/agent/config.js";
 import { createAgentRuntimeFactory } from "./core/agent/runtime.js";
 import { ensureWorkspaceScaffold } from "./core/agent/workspace.js";
@@ -90,17 +90,19 @@ const NOTIFY_LOCAL_ONLY = !["0", "false", "no"].includes(
   String(process.env.LOONG_NOTIFY_LOCAL_ONLY || "true").toLowerCase(),
 );
 
-const IMG_PIPELINE_DIR = process.env.IMG_PIPELINE_DIR || "";
-const IMG_PIPELINE_QUERY_CMD =
-  process.env.IMG_PIPELINE_QUERY_CMD ||
-  (IMG_PIPELINE_DIR ? join(IMG_PIPELINE_DIR, "bin", "query-embed") : "");
-const IMG_PIPELINE_DEFAULT_OUTPUT =
-  process.env.IMG_PIPELINE_OUTPUT_DIR || join(homedir(), "output");
-const IMG_PIPELINE_MAX_TOP = Number(process.env.IMG_PIPELINE_MAX_TOP || 20);
-const IMG_PIPELINE_MAX_BYTES = Number(process.env.IMG_PIPELINE_MAX_BYTES || 5 * 1024 * 1024);
-const IMG_PIPELINE_MAX_TOTAL_BYTES = Number(
-  process.env.IMG_PIPELINE_MAX_TOTAL_BYTES || 20 * 1024 * 1024,
-);
+const imgPipelineFeature = initImgPipelineFeature({
+  resolveUserPath,
+  notifyLocalOnly: NOTIFY_LOCAL_ONLY,
+  maxBodyBytes: MAX_BODY_BYTES,
+  logger: console,
+});
+
+const audioPipelineFeature = initAudioPipelineFeature({
+  resolveUserPath,
+  notifyLocalOnly: NOTIFY_LOCAL_ONLY,
+  maxBodyBytes: MAX_BODY_BYTES,
+  logger: console,
+});
 
 // File upload configuration
 const LOONG_UPLOAD_DIR = process.env.LOONG_UPLOAD_DIR || join(LOONG_RUNTIME_DIR, "uploads");
@@ -142,6 +144,12 @@ const IMESSAGE_ALLOWLIST = (process.env.IMESSAGE_ALLOWLIST || "")
   .filter(Boolean);
 const IMESSAGE_OUTBOUND_DIR =
   process.env.IMESSAGE_OUTBOUND_DIR || join(LOONG_RUNTIME_OUTBOUND_DIR, "imessage");
+const IMESSAGE_OUTBOUND_TTL_MS = process.env.IMESSAGE_OUTBOUND_TTL_MS
+  ? Number(process.env.IMESSAGE_OUTBOUND_TTL_MS)
+  : 24 * 60 * 60 * 1000;
+const IMESSAGE_OUTBOUND_CLEANUP_MS = process.env.IMESSAGE_OUTBOUND_CLEANUP_MS
+  ? Number(process.env.IMESSAGE_OUTBOUND_CLEANUP_MS)
+  : 60 * 60 * 1000;
 
 const DEFAULT_GATEWAY_CONFIG = {
   defaultAgent: null,
@@ -156,13 +164,10 @@ const resolveInternalExtensionPaths = createInternalExtensionsResolver({
   baseDir: __dirname,
   resolveUserPath,
   env: process.env,
-});
-
-const runImgPipelineQuery = createImgPipelineQuery({
-  queryCmd: IMG_PIPELINE_QUERY_CMD,
-  defaultOutputDir: IMG_PIPELINE_DEFAULT_OUTPUT,
-  resolveUserPath,
-  env: process.env,
+  extraExtensions: [
+    ...(imgPipelineFeature?.extensions ?? []),
+    ...(audioPipelineFeature?.extensions ?? []),
+  ],
 });
 
 const agentConfigLoader = createAgentConfigLoader({
@@ -297,13 +302,7 @@ const server = createServer(
     getBuiltinProviderCatalog,
     modelsPath: PI_MODELS_PATH,
     restartAgentProcesses: () => restartAgentProcesses({ agents, logger: console }),
-    runImgPipelineQuery,
-    normalizeStringList,
-    resolveUserPath,
-    guessMimeType,
-    imgPipelineMaxTop: IMG_PIPELINE_MAX_TOP,
-    imgPipelineMaxBytes: IMG_PIPELINE_MAX_BYTES,
-    imgPipelineMaxTotalBytes: IMG_PIPELINE_MAX_TOTAL_BYTES,
+    extraRoutes: [...(imgPipelineFeature?.routes ?? []), ...(audioPipelineFeature?.routes ?? [])],
     subagentRuns,
     subagentDirectReplies,
     persistSubagentRuns,
@@ -487,9 +486,21 @@ handleAgentEvent = createAgentEventHandler({
   notifyBackgroundWebClients,
 });
 
+const combinedTransformAgentPayload = (agent: unknown, payload: unknown) => {
+  let transformed = payload;
+  if (imgPipelineFeature?.transformAgentPayload) {
+    transformed = imgPipelineFeature.transformAgentPayload(agent, transformed);
+  }
+  if (audioPipelineFeature?.transformAgentPayload) {
+    transformed = audioPipelineFeature.transformAgentPayload(agent, transformed);
+  }
+  return transformed;
+};
+
 const handleAgentLine = createAgentLineHandler({
   handleAgentResponse,
   handleAgentEvent,
+  transformAgentPayload: combinedTransformAgentPayload,
   broadcastAgentPayload: (agentId, line) => {
     if (webChannel) {
       webChannel.broadcastAgentPayload(agentId, line);
@@ -547,6 +558,8 @@ imessageChannel = createIMessageChannel({
   region: IMESSAGE_REGION,
   allowlist: IMESSAGE_ALLOWLIST,
   outboundDir: IMESSAGE_OUTBOUND_DIR,
+  outboundCleanupIntervalMs: IMESSAGE_OUTBOUND_CLEANUP_MS,
+  outboundMaxAgeMs: IMESSAGE_OUTBOUND_TTL_MS,
   defaultAgentId,
   isSlashCommandText,
   resolveAgentLabel,

@@ -2,6 +2,7 @@ export const createAgentLineHandler = ({
   handleAgentResponse,
   handleAgentEvent,
   broadcastAgentPayload,
+  transformAgentPayload,
   debug = false,
 }) => {
   return (agent, line) => {
@@ -32,6 +33,9 @@ export const createAgentLineHandler = ({
     }
 
     if (payload) {
+      if (transformAgentPayload) {
+        payload = transformAgentPayload(agent, payload) || payload;
+      }
       const handled = handleAgentResponse?.(agent, payload);
       if (!handled) {
         handleAgentEvent?.(agent, payload);
@@ -39,6 +43,7 @@ export const createAgentLineHandler = ({
     }
 
     if (!payload) return;
-    broadcastAgentPayload?.(agent.id, normalizedLine);
+    const payloadLine = transformAgentPayload ? JSON.stringify(payload) : normalizedLine;
+    broadcastAgentPayload?.(agent.id, payloadLine);
   };
 };

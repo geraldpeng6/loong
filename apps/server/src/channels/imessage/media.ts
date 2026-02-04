@@ -1,4 +1,4 @@
-import { writeFileSync } from "fs";
+import { existsSync, readFileSync, writeFileSync } from "fs";
 import { extname, join } from "path";
 
 const MEDIA_EXTENSION_MAP = {
@@ -52,9 +52,17 @@ export const collectOutboundMedia = (messages = []) => {
     if (message.role !== "assistant" && message.role !== "toolResult") continue;
     if (Array.isArray(message.attachments)) {
       for (const attachment of message.attachments) {
-        if (!attachment?.content) continue;
+        let data = attachment?.content;
+        if (!data && attachment?.path && existsSync(attachment.path)) {
+          try {
+            data = readFileSync(attachment.path).toString("base64");
+          } catch {
+            data = null;
+          }
+        }
+        if (!data) continue;
         items.push({
-          data: attachment.content,
+          data,
           mimeType: attachment.mimeType || "application/octet-stream",
           fileName: attachment.fileName || "attachment",
         });

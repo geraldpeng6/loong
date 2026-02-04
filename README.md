@@ -19,7 +19,7 @@ Minimal WebSocket gateway that proxies to `pi --mode rpc`.
 ## Install
 
 ```bash
-cd /Users/jiale/code/loong
+cd $HOME/code/loong
 pnpm install
 ```
 
@@ -29,16 +29,16 @@ pnpm install
 # optional overrides (PI_CMD defaults to local node_modules/.bin/pi when available)
 export PORT=17800
 export PI_CMD=pi
-export PI_CWD=/Users/jiale/code/loong
-export LOONG_STATE_DIR=/Users/jiale/.loong
-export LOONG_CONFIG_PATH=/Users/jiale/.loong/config.json
+export PI_CWD=$HOME/code/loong
+export LOONG_STATE_DIR=$HOME/.loong
+export LOONG_CONFIG_PATH=$HOME/.loong/config.json
 export LOONG_PASSWORD=your-password
 export LOONG_NOTIFY_LOCAL_ONLY=1
 export LOONG_MAX_BODY_BYTES=262144
-export PI_EDIT_ROOT=/Users/jiale/code/loong
+export PI_EDIT_ROOT=$HOME/code/loong
 
 # img-pipeline integration (optional)
-export IMG_PIPELINE_DIR=/Users/jiale/temp-workspaces/lucy2workspace/img-pipeline
+export IMG_PIPELINE_DIR=$HOME/projects/img-pipeline
 # or explicitly set query-embed path:
 # export IMG_PIPELINE_QUERY_CMD=/path/to/img-pipeline/bin/query-embed
 # optional limits for /api/pipeline/query-media:
@@ -47,7 +47,7 @@ export IMG_PIPELINE_DIR=/Users/jiale/temp-workspaces/lucy2workspace/img-pipeline
 # export IMG_PIPELINE_MAX_TOTAL_BYTES=$((20*1024*1024))
 
 # file upload configuration (optional)
-export LOONG_UPLOAD_DIR=/Users/jiale/.loong/uploads
+export LOONG_UPLOAD_DIR=$HOME/.loong/uploads
 export LOONG_UPLOAD_MAX_SIZE=$((10*1024*1024))  # 10MB default
 export LOONG_UPLOAD_ALLOWED_TYPES="image/,audio/,video/,application/pdf,text/"
 export LOONG_UPLOAD_ALLOW_UNKNOWN=true
@@ -156,7 +156,7 @@ brew install steipete/tap/imsg
 # required
 export IMESSAGE_ENABLED=1
 export IMESSAGE_CLI_PATH=/usr/local/bin/imsg   # or /opt/homebrew/bin/imsg
-export IMESSAGE_DB_PATH=/Users/<you>/Library/Messages/chat.db
+export IMESSAGE_DB_PATH=$HOME/Library/Messages/chat.db
 
 # optional
 export LOONG_IMESSAGE_AUTO=1   # auto-enable if chat.db exists (default: 1)
