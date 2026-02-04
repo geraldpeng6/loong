@@ -1,6 +1,6 @@
 import { createServer } from "http";
 import { randomUUID } from "crypto";
-import { existsSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync } from "fs";
 import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { homedir } from "os";
@@ -61,6 +61,8 @@ const resolveLocalPiCmd = () => {
 
 const PI_CMD = process.env.PI_CMD || resolveLocalPiCmd() || "pi";
 const PI_CWD = process.env.PI_CWD || resolve(__dirname, "..", "..");
+const PI_AGENTS_DIR = process.env.PI_AGENTS_DIR || join(homedir(), ".pi", "agent", "agents");
+const TEMPLATE_AGENTS_DIR = join(PI_CWD, "templates", "agents");
 const LOONG_STATE_DIR = process.env.LOONG_STATE_DIR || join(homedir(), ".loong");
 const LOONG_WORKSPACES_DIR = join(LOONG_STATE_DIR, "workspaces");
 const LOONG_SESSIONS_DIR = join(LOONG_STATE_DIR, "sessions");
@@ -159,6 +161,25 @@ const DEFAULT_GATEWAY_CONFIG = {
 };
 
 checkPiInstalled(PI_CMD, console);
+
+const ensureDefaultAgents = () => {
+  const templatePath = join(TEMPLATE_AGENTS_DIR, "qiuniu.md");
+  if (!existsSync(templatePath)) return;
+  if (!existsSync(PI_AGENTS_DIR)) {
+    mkdirSync(PI_AGENTS_DIR, { recursive: true });
+  }
+  const targetPath = join(PI_AGENTS_DIR, "qiuniu.md");
+  if (existsSync(targetPath)) return;
+  try {
+    copyFileSync(templatePath, targetPath);
+    console.log(`[loong] installed default agent template: ${targetPath}`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[loong] failed to install qiuniu agent: ${message}`);
+  }
+};
+
+ensureDefaultAgents();
 
 const resolveInternalExtensionPaths = createInternalExtensionsResolver({
   baseDir: __dirname,
