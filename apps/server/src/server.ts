@@ -47,6 +47,7 @@ import type { FileUploadConfig } from "./core/files/types.js";
 import { DEFAULT_MAX_FILE_SIZE, DEFAULT_ALLOWED_MIME_TYPES } from "./core/files/types.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = resolve(__dirname, "..", "..", "..");
 
 const PORT = Number(process.env.PORT || 17800);
 
@@ -62,7 +63,7 @@ const resolveLocalPiCmd = () => {
 const PI_CMD = process.env.PI_CMD || resolveLocalPiCmd() || "pi";
 const PI_CWD = process.env.PI_CWD || resolve(__dirname, "..", "..");
 const PI_AGENTS_DIR = process.env.PI_AGENTS_DIR || join(homedir(), ".pi", "agent", "agents");
-const TEMPLATE_AGENTS_DIR = join(PI_CWD, "templates", "agents");
+const TEMPLATE_AGENTS_DIR = join(PROJECT_ROOT, "templates", "agents");
 const LOONG_STATE_DIR = process.env.LOONG_STATE_DIR || join(homedir(), ".loong");
 const LOONG_WORKSPACES_DIR = join(LOONG_STATE_DIR, "workspaces");
 const LOONG_SESSIONS_DIR = join(LOONG_STATE_DIR, "sessions");
