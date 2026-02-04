@@ -6,6 +6,7 @@ export const createGatewayRuntime = ({
   resolveCommand,
   handleGatewayCommand,
   enqueueAgentPrompt,
+  abortAgentTask,
   sendAgentRequest,
   sendToAgent,
 }) => {
@@ -27,6 +28,7 @@ export const createGatewayRuntime = ({
     resolveCommand,
     handleGatewayCommand,
     enqueueAgentPrompt,
+    abortAgentTask,
     sendAgentRequest,
     getSessionEntries: sessionManager?.getSessionEntries,
     renameSessionFile: sessionManager?.renameSessionFile,

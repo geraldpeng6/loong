@@ -5,12 +5,13 @@ import { Button } from "@/components/ui/button";
 import { useFileUpload } from "@/hooks/useFileUpload";
 import type { AttachmentReference, PendingAttachment } from "@/types/upload";
 import { getFileKind, formatFileSize } from "@/types/upload";
-import { X, Paperclip, Image, FileAudio, FileVideo, FileText, Loader2 } from "lucide-react";
+import { X, Paperclip, Image, FileAudio, FileVideo, FileText, Loader2, Square } from "lucide-react";
 
 export type ComposerProps = {
   draft: string;
   onDraftChange: (value: string) => void;
   onSend: (text: string, attachments?: AttachmentReference[]) => void;
+  onAbort?: () => void;
   busy: boolean;
 };
 
@@ -30,7 +31,7 @@ const FileIcon = ({ mimeType }: { mimeType: string }) => {
   }
 };
 
-const Composer = ({ draft, onDraftChange, onSend, busy }: ComposerProps) => {
+const Composer = ({ draft, onDraftChange, onSend, onAbort, busy }: ComposerProps) => {
   const [value, setValue] = useState(draft);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -82,6 +83,10 @@ const Composer = ({ draft, onDraftChange, onSend, busy }: ComposerProps) => {
     onDraftChange("");
   };
 
+  const handleAbort = () => {
+    onAbort?.();
+  };
+
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     addFiles(e.target.files);
     // Reset input so the same file can be selected again
@@ -100,6 +105,9 @@ const Composer = ({ draft, onDraftChange, onSend, busy }: ComposerProps) => {
   };
 
   const hasError = pendingAttachments.some((a) => a.status === "error");
+  const canSend =
+    !busy && !isUploading && (!!value.trim() || pendingAttachments.length > 0) && !hasError;
+  const canAbort = busy && !isUploading;
 
   return (
     <div className="w-full px-4 pb-4 pt-5 sm:px-6 sm:pt-4">
@@ -166,6 +174,10 @@ const Composer = ({ draft, onDraftChange, onSend, busy }: ComposerProps) => {
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
+                if (busy) {
+                  handleAbort();
+                  return;
+                }
                 handleSend();
               }
             }}
@@ -183,17 +195,16 @@ const Composer = ({ draft, onDraftChange, onSend, busy }: ComposerProps) => {
             <Paperclip size={16} />
           </Button>
 
-          {/* Send button */}
+          {/* Send/stop button */}
           <Button
             size="icon"
             variant="ghost"
             className="absolute bottom-2 right-2"
-            onClick={handleSend}
-            disabled={
-              busy || isUploading || (!value.trim() && pendingAttachments.length === 0) || hasError
-            }
+            onClick={busy ? handleAbort : handleSend}
+            disabled={busy ? !canAbort : !canSend}
+            title={busy ? "Stop" : "Send"}
           >
-            <SendHorizontalIcon size={16} />
+            {busy ? <Square size={16} /> : <SendHorizontalIcon size={16} />}
           </Button>
 
           <input

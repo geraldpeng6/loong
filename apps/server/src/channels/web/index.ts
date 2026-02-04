@@ -37,6 +37,7 @@ type GatewayRuntime = {
       attachments?: AttachmentReference[];
     },
   ) => void;
+  abortAgentTask?: (agent: AgentRuntime) => boolean | Promise<boolean>;
   sendAgentRequest?: (agent: AgentRuntime, payload: Record<string, unknown>) => Promise<unknown>;
   getSessionEntries?: (agent: AgentRuntime) => unknown[];
   renameSessionFile?: (
@@ -116,6 +117,7 @@ export const createWebChannel = ({
     resolveCommand,
     handleGatewayCommand,
     enqueueAgentPrompt,
+    abortAgentTask,
     sendAgentRequest,
     getSessionEntries,
     renameSessionFile,
@@ -246,6 +248,19 @@ export const createWebChannel = ({
       const currentAgent = getAgent?.(context.agentId) || getAgent?.(defaultAgentId);
       if (!currentAgent) {
         sendToClient(ws, { type: "error", error: "No agent available" });
+        return;
+      }
+
+      if (payload.type === "abort") {
+        const aborted = (await abortAgentTask?.(currentAgent)) ?? false;
+        if (payload.id) {
+          sendToClient(ws, {
+            type: "response",
+            id: payload.id,
+            command: "abort",
+            success: aborted,
+          });
+        }
         return;
       }
 

@@ -480,6 +480,7 @@ const {
   enqueueAgentPrompt,
   completeCurrentTask,
   failCurrentTask,
+  abortCurrentTask,
   clearTaskTimeout,
   clearSlashCommandTimer,
 } = taskRunner;
@@ -567,6 +568,7 @@ const gatewayRuntime = createGatewayRuntime({
   resolveCommand,
   handleGatewayCommand,
   enqueueAgentPrompt,
+  abortAgentTask: abortCurrentTask,
   sendAgentRequest,
   sendToAgent: sendToPi,
 });

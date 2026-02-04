@@ -147,6 +147,10 @@ export const useGateway = () => {
     setState((prev) => ({ ...prev, draft }));
   }, []);
 
+  const abortCurrent = useCallback(() => {
+    send({ type: "abort" });
+  }, [send]);
+
   const switchAgent = useCallback(
     (agentId: string) => {
       send({ type: "switch_agent", agentId });
@@ -533,6 +537,7 @@ export const useGateway = () => {
     refreshModels,
     forkFromEntry,
     setDraft,
+    abortCurrent,
     reconnect,
   };
 };

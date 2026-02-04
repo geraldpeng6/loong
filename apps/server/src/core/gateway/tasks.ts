@@ -132,6 +132,17 @@ export const createTaskRunner = ({
     broadcastAgentStatus?.(agent);
   };
 
+  const abortCurrentTask = (agent: AgentRuntime) => {
+    const task = agent.currentTask;
+    if (!task) return false;
+    task.aborted = true;
+    clearTaskTimeout(task);
+    clearSlashCommandTimer(task);
+    sendToAgent?.(agent, { type: "abort" });
+    broadcastAgentStatus?.(agent);
+    return true;
+  };
+
   const enqueueAgentPrompt = (agent: AgentRuntime, task: Task) => {
     if (agent.offline) {
       void notifyTaskMessage?.(agent, task, "代理当前不可用，请稍后再试。");
@@ -288,6 +299,7 @@ export const createTaskRunner = ({
     processNextAgent,
     completeCurrentTask,
     failCurrentTask,
+    abortCurrentTask,
     clearTaskTimeout,
     clearSlashCommandTimer,
   };

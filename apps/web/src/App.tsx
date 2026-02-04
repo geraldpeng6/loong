@@ -30,6 +30,7 @@ const App = () => {
     forkFromEntry,
     setDraft,
     refreshModels,
+    abortCurrent,
   } = useGateway();
   const {
     state: modelRegistry,
@@ -247,6 +248,7 @@ const App = () => {
             draft={state.draft}
             onDraftChange={setDraft}
             onSend={sendPrompt}
+            onAbort={abortCurrent}
             busy={state.busy}
           />
         </div>
