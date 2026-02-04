@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -45,6 +46,9 @@ const CustomProviderDialog = ({ open, onOpenChange, onSave }: CustomProviderDial
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Add OpenAI-compatible Provider</DialogTitle>
+          <DialogDescription>
+            Configure the base URL, API key, and default model for a custom provider.
+          </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <div className="space-y-1">

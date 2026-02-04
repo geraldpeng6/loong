@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -44,6 +45,7 @@ const HelpButton = () => {
       <DialogContent className="max-w-md max-h-[80vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-base">使用指南</DialogTitle>
+          <DialogDescription>快速了解 Agent、命令与扩展设置。</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-5 py-2 text-sm">

@@ -5,7 +5,13 @@ import EyeIcon from "@/components/ui/eye-icon";
 import PenIcon from "@/components/ui/pen-icon";
 import UserPlusIcon from "@/components/ui/user-plus-icon";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -309,6 +315,9 @@ const ModelSelector = ({
         <DialogContent className="max-w-3xl">
           <DialogHeader>
             <DialogTitle>Model selection</DialogTitle>
+            <DialogDescription>
+              Choose a provider and model for the current session.
+            </DialogDescription>
           </DialogHeader>
 
           {showConfigNotice && configNotice ? (

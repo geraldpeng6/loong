@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -107,6 +108,9 @@ const ExtensionsPanel = () => {
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Extensions</DialogTitle>
+            <DialogDescription>
+              Configure image and audio pipeline settings for this server.
+            </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-6 py-4">
