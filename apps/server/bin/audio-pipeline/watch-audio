@@ -1,0 +1,228 @@
+#!/usr/bin/env python3
+"""watch-audio: 监控音频目录并自动转写和生成嵌入
+Usage: watch-audio [--watch-dir DIR] [--output-dir DIR] [--model MODEL] [--interval SECONDS]
+
+Requires: ffmpeg, whisper (install in current env or set WHISPER_VENV/WHISPER_SITE_PACKAGES)
+"""
+
+import argparse
+import hashlib
+import json
+import os
+import shutil
+import sys
+import time
+from pathlib import Path
+
+# Check ffmpeg first
+if not shutil.which("ffmpeg"):
+    print("Error: ffmpeg not found. Please install ffmpeg:", file=sys.stderr)
+    print("  macOS:   brew install ffmpeg", file=sys.stderr)
+    print("  Ubuntu:  sudo apt update && sudo apt install ffmpeg", file=sys.stderr)
+    print("  Arch:    sudo pacman -S ffmpeg", file=sys.stderr)
+    sys.exit(1)
+
+
+def resolve_whisper_site_packages() -> Path | None:
+    site_override = os.environ.get("WHISPER_SITE_PACKAGES") or os.environ.get(
+        "AUDIO_PIPELINE_WHISPER_SITE_PACKAGES"
+    )
+    if site_override:
+        return Path(site_override)
+
+    venv = os.environ.get("WHISPER_VENV") or os.environ.get("AUDIO_PIPELINE_WHISPER_VENV")
+    if venv:
+        py_version = os.environ.get("WHISPER_PYTHON_VERSION") or (
+            f"{sys.version_info.major}.{sys.version_info.minor}"
+        )
+        candidates = [
+            Path(venv) / "lib" / f"python{py_version}" / "site-packages",
+            Path(venv) / "lib" / "python3" / "site-packages",
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+    return None
+
+
+def load_whisper_modules():
+    try:
+        import torch
+        import whisper
+
+        return torch, whisper
+    except ModuleNotFoundError:
+        site_packages = resolve_whisper_site_packages()
+        if site_packages and site_packages.exists():
+            sys.path.insert(0, str(site_packages))
+            import torch
+            import whisper
+
+            return torch, whisper
+
+        print("Error: whisper module not found. Install openai-whisper or set WHISPER_VENV.")
+        sys.exit(1)
+
+
+torch, whisper = load_whisper_modules()
+
+SUPPORTED_EXTS = {".mp3", ".wav", ".m4a", ".ogg", ".flac", ".webm", ".mp4"}
+DEFAULT_INPUT_DIR = Path(
+    os.environ.get("AUDIO_PIPELINE_INPUT_DIR", str(Path.home() / "data" / "audio"))
+)
+DEFAULT_OUTPUT_DIR = Path(
+    os.environ.get("AUDIO_PIPELINE_OUTPUT_DIR", str(Path.home() / "output" / "audio-pipeline"))
+)
+
+
+def get_file_hash(filepath: Path) -> str:
+    """计算文件 SHA256 hash（前 1MB）"""
+    sha256 = hashlib.sha256()
+    with open(filepath, "rb") as f:
+        sha256.update(f.read(1024 * 1024))
+    return sha256.hexdigest()[:16]
+
+
+def ensure_dirs(output_dir: Path):
+    """确保输出目录结构存在"""
+    (output_dir / "transcriptions").mkdir(parents=True, exist_ok=True)
+    (output_dir / "embeddings").mkdir(parents=True, exist_ok=True)
+    (output_dir / "metadata").mkdir(parents=True, exist_ok=True)
+
+
+def process_audio_file(audio_path: Path, model, output_dir: Path, args) -> dict:
+    """处理单个音频文件：转写 + 嵌入"""
+    file_hash = get_file_hash(audio_path)
+
+    embed_file = output_dir / "embeddings" / f"{file_hash}.json"
+    if embed_file.exists() and not args.force:
+        return {"status": "skipped", "hash": file_hash, "reason": "already_processed"}
+
+    try:
+        print(f"[PROCESS] {audio_path.name} (hash: {file_hash})", flush=True)
+
+        result = model.transcribe(str(audio_path), language=args.language, verbose=False)
+
+        transcription = {
+            "hash": file_hash,
+            "filename": str(audio_path),
+            "text": result.get("text", "").strip(),
+            "language": result.get("language", args.language),
+            "model": args.model,
+            "segments": [
+                {
+                    "start": seg.get("start", 0),
+                    "end": seg.get("end", 0),
+                    "text": seg.get("text", "").strip(),
+                }
+                for seg in result.get("segments", [])
+            ],
+        }
+
+        trans_file = output_dir / "transcriptions" / f"{file_hash}.json"
+        with open(trans_file, "w", encoding="utf-8") as f:
+            json.dump(transcription, f, ensure_ascii=False, indent=2)
+
+        meta = {
+            "hash": file_hash,
+            "filename": str(audio_path),
+            "text": transcription["text"],
+            "language": transcription["language"],
+            "model": args.model,
+        }
+        meta_file = output_dir / "metadata" / f"{file_hash}.json"
+        with open(meta_file, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+
+        embed_cmd = f"audio-embed --input-json {trans_file} --output {embed_file}"
+        if os.system(embed_cmd) != 0:
+            raise RuntimeError("Embedding generation failed")
+
+        return {"status": "ok", "hash": file_hash}
+
+    except Exception as e:
+        print(f"  ✗ Error: {e}", flush=True)
+        return {"status": "error", "hash": file_hash, "error": str(e)}
+
+
+def scan_directory(watch_dir: Path, processed_hashes: set) -> list:
+    """扫描目录，返回新音频文件列表"""
+    new_files = []
+    for ext in SUPPORTED_EXTS:
+        for audio_path in watch_dir.rglob(f"*{ext}"):
+            file_hash = get_file_hash(audio_path)
+            if file_hash not in processed_hashes:
+                new_files.append(audio_path)
+    return new_files
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Watch and process audio files")
+    parser.add_argument("--watch-dir", type=Path, default=DEFAULT_INPUT_DIR, help="Directory to watch")
+    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR, help="Output directory")
+    parser.add_argument(
+        "--model",
+        default=os.environ.get("WHISPER_MODEL", "base"),
+        help="Whisper model",
+    )
+    parser.add_argument("--language", default="zh", help="Language code")
+    parser.add_argument("--interval", type=int, default=10, help="Scan interval in seconds")
+    parser.add_argument("--device", help="Device override (cpu/cuda)")
+    parser.add_argument("--force", action="store_true", help="Reprocess existing files")
+
+    args = parser.parse_args()
+
+    watch_dir = args.watch_dir.expanduser().resolve()
+    output_dir = args.output_dir.expanduser().resolve()
+
+    if not watch_dir.exists():
+        print(f"Creating watch directory: {watch_dir}")
+        watch_dir.mkdir(parents=True, exist_ok=True)
+
+    ensure_dirs(output_dir)
+
+    device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Loading Whisper model '{args.model}' on {device}...", flush=True)
+
+    cache_dir = Path(
+        os.environ.get(
+            "WHISPER_CACHE_DIR",
+            os.environ.get("AUDIO_PIPELINE_CACHE_DIR", str(Path.home() / ".loong" / "cache" / "whisper")),
+        )
+    )
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    model = whisper.load_model(args.model, device=device, download_root=str(cache_dir))
+
+    print(f"Watching: {watch_dir}")
+    print(f"Output: {output_dir}")
+    print(f"Interval: {args.interval}s")
+    print("Press Ctrl+C to stop\n")
+
+    processed_hashes = set()
+
+    try:
+        while True:
+            new_files = scan_directory(watch_dir, processed_hashes)
+
+            if new_files:
+                print(f"[{time.strftime('%H:%M:%S')}] Found {len(new_files)} new file(s)", flush=True)
+
+                for audio_path in new_files:
+                    file_hash = get_file_hash(audio_path)
+                    result = process_audio_file(audio_path, model, output_dir, args)
+                    processed_hashes.add(file_hash)
+
+                    if result["status"] == "error":
+                        print(f"  Error processing {audio_path.name}: {result.get('error')}")
+
+            time.sleep(args.interval)
+
+    except KeyboardInterrupt:
+        print("\n[STOP] Watch stopped by user")
+        return 0
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

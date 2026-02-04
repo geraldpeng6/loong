@@ -1,0 +1,68 @@
+#!/bin/bash
+# 设置工具路径
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PATH="$SCRIPT_DIR:$PATH"
+
+# process-batch: 批量处理目录中的所有图片（幂等）
+# Usage: process-batch <input_dir> [output_dir]
+# 符合 UNIX 哲学: 输出每个处理的文件 hash，一行一个
+set -e
+
+DEFAULT_INPUT_DIR="${IMG_PIPELINE_INPUT_DIR:-$HOME/data}"
+INPUT_DIR="${1:-$DEFAULT_INPUT_DIR}"
+OUTPUT_DIR="${2:-${IMG_PIPELINE_OUTPUT_DIR:-$HOME/output}}"
+
+if [ ! -d "$INPUT_DIR" ]; then
+    echo "Error: Input directory not found: $INPUT_DIR" >&2
+    exit 1
+fi
+
+check_ollama() {
+    if ! command -v curl &> /dev/null; then
+        echo "Error: curl not found. Please install curl." >&2
+        exit 1
+    fi
+
+    if ! command -v ollama &> /dev/null; then
+        echo "Error: ollama not found. Install from https://ollama.com" >&2
+        exit 1
+    fi
+
+    local tags
+    tags=$(curl -s --max-time 5 http://localhost:11434/api/tags || true)
+    if [ -z "$tags" ]; then
+        echo "Error: Ollama service not running. Start: ollama serve" >&2
+        exit 1
+    fi
+
+    if ! echo "$tags" | grep -q "qwen3-vl:2b"; then
+        echo "Error: model qwen3-vl:2b not found. Run: ollama pull qwen3-vl:2b" >&2
+        exit 1
+    fi
+    if ! echo "$tags" | grep -q "qwen3-embedding:0.6b"; then
+        echo "Error: model qwen3-embedding:0.6b not found. Run: ollama pull qwen3-embedding:0.6b" >&2
+        exit 1
+    fi
+}
+
+check_ollama
+export SKIP_OLLAMA_CHECK=1
+
+mkdir -p "$OUTPUT_DIR"/{descriptions,metadata,embeddings,logs}
+
+# 支持的图片扩展名
+find "$INPUT_DIR" -type f \( \
+    -iname "*.jpg" -o \
+    -iname "*.jpeg" -o \
+    -iname "*.png" -o \
+    -iname "*.webp" -o \
+    -iname "*.gif" \
+\) | while read -r file; do
+    # 幂等处理每张图片
+    result=$(process-image "$file" "$OUTPUT_DIR" 2>&1)
+    if [ $? -eq 0 ]; then
+        echo "$result"
+    else
+        echo "ERROR: $file" >&2
+    fi
+done

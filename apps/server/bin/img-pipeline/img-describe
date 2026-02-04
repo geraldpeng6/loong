@@ -1,0 +1,49 @@
+#!/bin/bash
+# img-describe: 使用 Qwen3-VL:2B 生成图片描述
+# Usage: img-describe <image_file>
+# Output: 纯文本描述到 stdout
+set -e
+[ $# -ne 1 ] && { echo "Usage: img-describe <image_file>" >&2; exit 1; }
+file="$1"
+[ ! -f "$file" ] && { echo "Error: File not found: $file" >&2; exit 1; }
+
+mime_type=$(file -b --mime-type "$file")
+case "$mime_type" in
+    image/jpeg|image/png|image/webp|image/gif) ;;
+    *) echo "Error: Not a supported image: $mime_type" >&2; exit 1 ;;
+esac
+
+# 检查图片尺寸（Qwen3-VL 最小尺寸要求 32x32）
+size_info=$(file -b "$file" | grep -oE "[0-9]+ x [0-9]+" | head -1)
+if [ -n "$size_info" ]; then
+    width=$(echo "$size_info" | awk '{print $1}')
+    height=$(echo "$size_info" | awk '{print $3}')
+    if [ "$width" -lt 32 ] || [ "$height" -lt 32 ]; then
+        echo "图片尺寸过小(${width}x${height})，无法进行视觉识别。"
+        exit 0
+    fi
+fi
+
+OLLAMA_GENERATE_URL="${OLLAMA_GENERATE_URL:-http://localhost:11434/api/generate}"
+IMG_DESCRIBE_MODEL="${IMG_DESCRIBE_MODEL:-qwen3-vl:2b}"
+
+python3 - "$file" <<'PY' | \
+curl -s "$OLLAMA_GENERATE_URL" \
+    -H "Content-Type: application/json" \
+    -d @- | \
+python3 -c "import sys, json; d=json.load(sys.stdin); print(d.get('response', '').strip())"
+import base64, json, os, sys
+path = sys.argv[1]
+with open(path, "rb") as f:
+    img = base64.b64encode(f.read()).decode()
+
+model = os.environ.get("IMG_DESCRIBE_MODEL", "qwen3-vl:2b")
+
+payload = {
+    "model": model,
+    "prompt": "用中文详细描述这张图片的内容，包括主体、场景、颜色、构图等。",
+    "images": [img],
+    "stream": False
+}
+print(json.dumps(payload))
+PY

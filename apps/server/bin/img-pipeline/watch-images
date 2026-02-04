@@ -1,0 +1,422 @@
+#!/bin/bash
+# watch-images: 监控多个目录并自动处理新图片
+# 支持环境变量、配置文件或命令行参数
+
+set -e
+
+# 默认配置
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+DEFAULT_OUTPUT_DIR="${IMG_PIPELINE_OUTPUT_DIR:-$HOME/output}"
+DEFAULT_WATCH_DIRS="${IMG_PIPELINE_INPUT_DIRS:-${IMG_PIPELINE_INPUT_DIR:-$HOME/data}}"
+WATCH_MODE=""
+
+# 加载配置文件（如果存在）
+CONFIG_LOCATIONS=(
+    "$HOME/.config/img-pipeline/config"
+    "/etc/img-pipeline/config"
+    "$PROJECT_DIR/config"
+)
+
+for config in "${CONFIG_LOCATIONS[@]}"; do
+    if [ -f "$config" ]; then
+        source "$config"
+        echo "[INFO] Loaded config: $config"
+        break
+    fi
+done
+
+# 环境变量覆盖配置
+OUTPUT_DIR="${OUTPUT_DIR:-$DEFAULT_OUTPUT_DIR}"
+WATCH_DIRS="${WATCH_DIRS:-$DEFAULT_WATCH_DIRS}"
+LOG_LEVEL="${LOG_LEVEL:-INFO}"
+POLL_INTERVAL="${POLL_INTERVAL:-5}"
+IMAGE_EXTENSIONS="${IMAGE_EXTENSIONS:-jpg jpeg png webp gif}"
+
+# 命令行参数覆盖
+usage() {
+    cat << EOF
+Usage: watch-images [OPTIONS] [DIR1 DIR2 ...]
+
+Monitor directories for new images and process them automatically.
+
+Options:
+    -o, --output DIR       Output directory (default: $DEFAULT_OUTPUT_DIR)
+    -p, --poll SECONDS     Use polling mode with interval (default: use inotify)
+    -c, --config FILE      Specify config file
+    -d, --daemon           Run as daemon (background)
+    -l, --log FILE         Log file path
+    -h, --help             Show this help
+
+Environment Variables:
+    OUTPUT_DIR             Output directory
+    WATCH_DIRS             Space-separated list of directories to watch
+    IMG_PIPELINE_OUTPUT_DIR Default output directory
+    IMG_PIPELINE_INPUT_DIRS Default watch directories (space-separated)
+    IMG_PIPELINE_INPUT_DIR  Default watch directory (single)
+    LOG_LEVEL              Log level: DEBUG, INFO, WARN, ERROR
+
+Config File Locations:
+    ~/.config/img-pipeline/config
+    /etc/img-pipeline/config
+    ./config
+
+Examples:
+    # Use default settings (from config or env)
+    watch-images
+    
+    # Watch specific directories
+    watch-images ~/data /mnt/photos
+    
+    # Custom output directory
+    watch-images -o /var/lib/img-output ~/data
+    
+    # Polling mode (no inotify required)
+    watch-images -p 10 ~/data
+
+Notes:
+    - macOS uses fswatch (install: brew install fswatch)
+    - Linux uses inotifywait (install: sudo apt-get install inotify-tools)
+    - Use --poll to avoid external watcher dependencies
+
+EOF
+}
+
+# 解析命令行参数
+WATCH_DIRS_FROM_ARGS=""
+USE_POLL=false
+DAEMON_MODE=false
+LOG_FILE=""
+CUSTOM_CONFIG=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -o|--output)
+            OUTPUT_DIR="$2"
+            shift 2
+            ;;
+        -p|--poll)
+            USE_POLL=true
+            POLL_INTERVAL="${2:-5}"
+            shift 2
+            ;;
+        -c|--config)
+            CUSTOM_CONFIG="$2"
+            if [ -f "$CUSTOM_CONFIG" ]; then
+                source "$CUSTOM_CONFIG"
+                echo "[INFO] Loaded custom config: $CUSTOM_CONFIG"
+            else
+                echo "[ERROR] Config file not found: $CUSTOM_CONFIG"
+                exit 1
+            fi
+            shift 2
+            ;;
+        -d|--daemon)
+            DAEMON_MODE=true
+            shift
+            ;;
+        -l|--log)
+            LOG_FILE="$2"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -*)
+            echo "[ERROR] Unknown option: $1"
+            usage
+            exit 1
+            ;;
+        *)
+            # 收集目录参数
+            WATCH_DIRS_FROM_ARGS="$WATCH_DIRS_FROM_ARGS $1"
+            shift
+            ;;
+    esac
+done
+
+# 命令行目录参数覆盖环境变量/配置
+if [ -n "$WATCH_DIRS_FROM_ARGS" ]; then
+    WATCH_DIRS="$WATCH_DIRS_FROM_ARGS"
+fi
+
+# 验证目录
+if [ -z "$WATCH_DIRS" ]; then
+    echo "[ERROR] No watch directories specified"
+    usage
+    exit 1
+fi
+
+# 创建输出目录
+mkdir -p "$OUTPUT_DIR"/{descriptions,metadata,embeddings,logs}
+
+# 设置日志
+if [ -z "$LOG_FILE" ]; then
+    LOG_FILE="$OUTPUT_DIR/logs/watch.log"
+fi
+mkdir -p "$(dirname "$LOG_FILE")"
+
+# 日志函数
+log() {
+    local level="$1"
+    local msg="$2"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    
+    case "$LOG_LEVEL" in
+        DEBUG) ;;
+        INFO) [[ "$level" == "DEBUG" ]] && return ;;
+        WARN) [[ "$level" =~ ^(DEBUG|INFO)$ ]] && return ;;
+        ERROR) [[ "$level" =~ ^(DEBUG|INFO|WARN)$ ]] && return ;;
+    esac
+    
+    echo "[$timestamp] [$level] $msg" | tee -a "$LOG_FILE"
+}
+
+# 检查依赖
+check_deps() {
+    if ! command -v curl &> /dev/null; then
+        log "ERROR" "curl is required"
+        exit 1
+    fi
+    
+    if ! command -v python3 &> /dev/null; then
+        log "ERROR" "python3 is required"
+        exit 1
+    fi
+
+    if ! command -v ollama &> /dev/null; then
+        log "ERROR" "ollama not found. Install from https://ollama.com"
+        exit 1
+    fi
+
+    local tags
+    tags=$(curl -s --max-time 5 http://localhost:11434/api/tags || true)
+    if [ -z "$tags" ]; then
+        log "ERROR" "Ollama service not running. Start: ollama serve"
+        exit 1
+    fi
+
+    if ! echo "$tags" | grep -q "qwen3-vl:2b"; then
+        log "ERROR" "model qwen3-vl:2b not found. Run: ollama pull qwen3-vl:2b"
+        exit 1
+    fi
+    if ! echo "$tags" | grep -q "qwen3-embedding:0.6b"; then
+        log "ERROR" "model qwen3-embedding:0.6b not found. Run: ollama pull qwen3-embedding:0.6b"
+        exit 1
+    fi
+
+    # 如果用户指定了轮询模式，则不检查监控工具
+    if [ "$USE_POLL" = true ]; then
+        return
+    fi
+
+    local os_name
+    os_name=$(uname -s)
+
+    case "$os_name" in
+        Darwin)
+            if ! command -v fswatch &> /dev/null; then
+                log "ERROR" "fswatch not found. Install: brew install fswatch"
+                log "ERROR" "Or run with --poll to use polling mode."
+                exit 1
+            fi
+            WATCH_MODE="fswatch"
+            ;;
+        Linux)
+            if ! command -v inotifywait &> /dev/null; then
+                log "ERROR" "inotifywait not found. Install: sudo apt-get install inotify-tools"
+                log "ERROR" "Or run with --poll to use polling mode."
+                exit 1
+            fi
+            WATCH_MODE="inotify"
+            ;;
+        *)
+            log "WARN" "Unknown OS: $os_name. Falling back to polling mode."
+            USE_POLL=true
+            ;;
+    esac
+}
+
+# 处理单张图片
+process_file() {
+    local file="$1"
+    local hash=$("$SCRIPT_DIR/img-hash" "$file")
+    
+    log "INFO" "Processing: $(basename "$file") (hash: ${hash:0:16}...)"
+    
+    # 检查是否已处理
+    if [ -f "$OUTPUT_DIR/descriptions/${hash}.txt" ]; then
+        log "DEBUG" "Already processed, skipping"
+        return
+    fi
+    
+    # 调用 process-image
+    if "$SCRIPT_DIR/process-image" "$file" "$OUTPUT_DIR" &> /dev/null; then
+        log "INFO" "Success: ${hash:0:16}..."
+    else
+        log "ERROR" "Failed to process: $file"
+    fi
+}
+
+# 批量处理现有文件
+process_existing() {
+    log "INFO" "Processing existing files..."
+    
+    for dir in $WATCH_DIRS; do
+        dir=$(echo "$dir" | xargs)  # trim whitespace
+        if [ ! -d "$dir" ]; then
+            log "WARN" "Directory not found: $dir"
+            continue
+        fi
+        
+        log "INFO" "Scanning: $dir"
+        
+        # 构建 find 的扩展名参数
+        local ext_args=""
+        for ext in $IMAGE_EXTENSIONS; do
+            ext_args="$ext_args -iname '*.$ext' -o"
+        done
+        ext_args="${ext_args% -o}"  # 移除最后的 -o
+        
+        eval "find \"$dir\" -type f \( $ext_args \) 2>/dev/null" | while read -r file; do
+            process_file "$file"
+        done
+    done
+    
+    log "INFO" "Existing files processed"
+}
+
+# inotify 监控模式
+watch_inotify() {
+    log "INFO" "Starting inotify watch mode"
+    log "INFO" "Watching: $WATCH_DIRS"
+    log "INFO" "Output: $OUTPUT_DIR"
+    log "INFO" "Press Ctrl+C to stop"
+    
+    # 构建 inotifywait 参数
+    local watch_dirs=()
+    for dir in $WATCH_DIRS; do
+        dir=$(echo "$dir" | xargs)
+        if [ -d "$dir" ]; then
+            watch_dirs+=("$dir")
+        fi
+    done
+    
+    if [ ${#watch_dirs[@]} -eq 0 ]; then
+        log "ERROR" "No valid directories to watch"
+        exit 1
+    fi
+    
+    # 启动 inotifywait
+    inotifywait -m -r -e create,moved_to --format '%w%f' "${watch_dirs[@]}" 2>/dev/null | while read -r file; do
+        # 检查是否是图片
+        local ext="${file##*.}"
+        ext=$(echo "$ext" | tr '[:upper:]' '[:lower:]')
+        
+        if [[ " $IMAGE_EXTENSIONS " =~ " $ext " ]]; then
+            sleep 0.5  # 等待文件写入完成
+            process_file "$file"
+        fi
+    done
+}
+
+# fswatch 监控模式 (macOS)
+watch_fswatch() {
+    log "INFO" "Starting fswatch mode"
+    log "INFO" "Watching: $WATCH_DIRS"
+    log "INFO" "Output: $OUTPUT_DIR"
+    log "INFO" "Press Ctrl+C to stop"
+
+    local watch_dirs=()
+    for dir in $WATCH_DIRS; do
+        dir=$(echo "$dir" | xargs)
+        if [ -d "$dir" ]; then
+            watch_dirs+=("$dir")
+        fi
+    done
+
+    if [ ${#watch_dirs[@]} -eq 0 ]; then
+        log "ERROR" "No valid directories to watch"
+        exit 1
+    fi
+
+    fswatch -0 -r --event Created --event Renamed --event Updated "${watch_dirs[@]}" 2>/dev/null | while IFS= read -r -d '' file; do
+        if [ ! -f "$file" ]; then
+            continue
+        fi
+
+        local ext="${file##*.}"
+        ext=$(echo "$ext" | tr '[:upper:]' '[:lower:]')
+
+        if [[ " $IMAGE_EXTENSIONS " =~ " $ext " ]]; then
+            sleep 0.5
+            process_file "$file"
+        fi
+    done
+}
+
+# 轮询监控模式
+watch_poll() {
+    log "INFO" "Starting polling watch mode (interval: ${POLL_INTERVAL}s)"
+    log "INFO" "Watching: $WATCH_DIRS"
+    log "INFO" "Output: $OUTPUT_DIR"
+    log "INFO" "Press Ctrl+C to stop"
+    
+    local processed_file="$OUTPUT_DIR/.processed_files"
+    touch "$processed_file"
+    
+    while true; do
+        for dir in $WATCH_DIRS; do
+            dir=$(echo "$dir" | xargs)
+            if [ ! -d "$dir" ]; then
+                continue
+            fi
+            
+            # 查找新文件
+            for ext in $IMAGE_EXTENSIONS; do
+                find "$dir" -type f -iname "*.$ext" 2>/dev/null | while read -r file; do
+                    local hash=$("$SCRIPT_DIR/img-hash" "$file")
+                    
+                    if ! grep -q "^$hash$" "$processed_file" 2>/dev/null; then
+                        process_file "$file"
+                        echo "$hash" >> "$processed_file"
+                    fi
+                done
+            done
+        done
+        
+        sleep "$POLL_INTERVAL"
+    done
+}
+
+# 主函数
+main() {
+    log "INFO" "=== img-pipeline watch started ==="
+    log "INFO" "Version: 2.0"
+    
+    check_deps
+    
+    # 首先处理现有文件
+    process_existing
+    
+    # 启动监控
+    if [ "$USE_POLL" = true ]; then
+        watch_poll
+    else
+        if [ "$WATCH_MODE" = "fswatch" ]; then
+            watch_fswatch
+        else
+            watch_inotify
+        fi
+    fi
+}
+
+# 后台模式
+if [ "$DAEMON_MODE" = true ]; then
+    main &> /dev/null &
+    echo $! > "$OUTPUT_DIR/watch.pid"
+    log "INFO" "Daemon started, PID: $(cat "$OUTPUT_DIR/watch.pid")"
+else
+    main
+fi

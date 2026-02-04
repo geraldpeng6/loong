@@ -1,0 +1,18 @@
+#!/bin/bash
+# img-exif: 提取图片元数据 (无需 PIL)
+set -e
+[ $# -ne 1 ] && { echo "Usage: img-exif <image_file>" >&2; exit 1; }
+[ ! -f "$1" ] && { echo "Error: File not found: $1" >&2; exit 1; }
+
+file="$1"
+mime_type=$(file -b --mime-type "$file")
+size=$(stat -c%s "$file" 2>/dev/null || stat -f%z "$file" 2>/dev/null || echo 0)
+
+python3 -c "
+import json
+print(json.dumps({
+    'filename': '$file',
+    'mime_type': '$mime_type',
+    'size_bytes': $size
+}, ensure_ascii=False, indent=2))
+"

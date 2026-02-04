@@ -1,0 +1,48 @@
+#!/bin/bash
+# img-embed: 使用 Embedding 模型生成向量
+# Usage: echo "text" | img-embed
+# Output: JSON {embedding: [...]}
+set -e
+
+text=$(cat)
+[ -z "$text" ] && { echo "Error: Empty input" >&2; exit 1; }
+
+# 截断文本到合理长度（避免太长）
+text="${text:0:2000}"
+
+OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434/api/embeddings}"
+IMG_EMBED_MODEL="${IMG_EMBED_MODEL:-qwen3-embedding:0.6b}"
+
+# 使用 Python 处理 JSON 转义和 API 调用
+python3 << PYEOF
+import json
+import urllib.request
+import sys
+
+text = '''$text'''
+
+# 准备请求
+data = json.dumps({
+    "model": "${IMG_EMBED_MODEL}",
+    "prompt": text
+}).encode('utf-8')
+
+req = urllib.request.Request(
+    "${OLLAMA_URL}",
+    data=data,
+    headers={'Content-Type': 'application/json'},
+    method='POST'
+)
+
+try:
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        result = json.loads(resp.read().decode('utf-8'))
+        output = {
+            'embedding': result.get('embedding', []),
+            'dimension': len(result.get('embedding', []))
+        }
+        print(json.dumps(output, ensure_ascii=False))
+except Exception as e:
+    print(json.dumps({'error': str(e), 'dimension': 0}), file=sys.stderr)
+    sys.exit(1)
+PYEOF

@@ -1,0 +1,14 @@
+#!/bin/bash
+# img-hash: 计算图片文件的 SHA256 hash (幂等标识)
+# Usage: img-hash <image_file>
+set -e
+[ $# -ne 1 ] && { echo "Usage: img-hash <image_file>" >&2; exit 1; }
+[ ! -f "$1" ] && { echo "Error: File not found: $1" >&2; exit 1; }
+if command -v sha256sum &> /dev/null; then
+    sha256sum "$1" | cut -d' ' -f1
+elif command -v shasum &> /dev/null; then
+    shasum -a 256 "$1" | awk '{print $1}'
+else
+    echo "Error: sha256sum/shasum not found. Install coreutils or use a system with shasum." >&2
+    exit 1
+fi

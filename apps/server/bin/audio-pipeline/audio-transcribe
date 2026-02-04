@@ -1,0 +1,183 @@
+#!/usr/bin/env python3
+"""audio-transcribe: 使用 Whisper + ffmpeg 转写音频文件
+Usage: audio-transcribe <audio_file> [--model MODEL] [--language LANG]
+Output: JSON with transcription, segments, and metadata
+
+Requires: ffmpeg, whisper (install in current env or set WHISPER_VENV/WHISPER_SITE_PACKAGES)
+"""
+
+import argparse
+import hashlib
+import json
+import os
+import shutil
+import sys
+import time
+from pathlib import Path
+
+# Check ffmpeg first
+if not shutil.which("ffmpeg"):
+    print(
+        json.dumps(
+            {
+                "error": "ffmpeg not found. Please install ffmpeg:",
+                "install": {
+                    "macos": "brew install ffmpeg",
+                    "ubuntu": "sudo apt update && sudo apt install ffmpeg",
+                    "arch": "sudo pacman -S ffmpeg",
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    sys.exit(1)
+
+
+def resolve_whisper_site_packages() -> Path | None:
+    site_override = os.environ.get("WHISPER_SITE_PACKAGES") or os.environ.get(
+        "AUDIO_PIPELINE_WHISPER_SITE_PACKAGES"
+    )
+    if site_override:
+        return Path(site_override)
+
+    venv = os.environ.get("WHISPER_VENV") or os.environ.get("AUDIO_PIPELINE_WHISPER_VENV")
+    if venv:
+        py_version = os.environ.get("WHISPER_PYTHON_VERSION") or (
+            f"{sys.version_info.major}.{sys.version_info.minor}"
+        )
+        candidates = [
+            Path(venv) / "lib" / f"python{py_version}" / "site-packages",
+            Path(venv) / "lib" / "python3" / "site-packages",
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+    return None
+
+
+def load_whisper_modules():
+    try:
+        import torch
+        import whisper
+
+        return torch, whisper
+    except ModuleNotFoundError:
+        site_packages = resolve_whisper_site_packages()
+        if site_packages and site_packages.exists():
+            sys.path.insert(0, str(site_packages))
+            import torch
+            import whisper
+
+            return torch, whisper
+
+        print(
+            json.dumps(
+                {
+                    "error": "whisper module not found",
+                    "hint": "Install openai-whisper or set WHISPER_VENV/WHISPER_SITE_PACKAGES",
+                },
+                ensure_ascii=False,
+            )
+        )
+        sys.exit(1)
+
+
+torch, whisper = load_whisper_modules()
+
+SUPPORTED_EXTS = {".mp3", ".wav", ".m4a", ".ogg", ".flac", ".webm", ".mp4"}
+
+
+def get_file_hash(filepath: Path) -> str:
+    """计算文件内容的 SHA256 hash（前 1MB）"""
+    sha256 = hashlib.sha256()
+    with open(filepath, "rb") as f:
+        sha256.update(f.read(1024 * 1024))
+    return sha256.hexdigest()[:16]
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Transcribe audio using Whisper")
+    parser.add_argument("audio_file", help="Path to audio file")
+    parser.add_argument(
+        "--model",
+        default=os.environ.get("WHISPER_MODEL", "base"),
+        help="Whisper model name (tiny, base, small, medium, large)",
+    )
+    parser.add_argument("--language", default="zh", help="Language code (default: zh)")
+    parser.add_argument("--device", choices=["cpu", "cuda"], help="Device override")
+    parser.add_argument("--output-dir", type=Path, help="Output directory for transcription files")
+
+    args = parser.parse_args()
+
+    audio_path = Path(args.audio_file).expanduser().resolve()
+    if not audio_path.exists():
+        print(json.dumps({"error": f"File not found: {audio_path}"}, ensure_ascii=False))
+        sys.exit(1)
+
+    if audio_path.suffix.lower() not in SUPPORTED_EXTS:
+        print(json.dumps({"error": f"Unsupported format: {audio_path.suffix}"}, ensure_ascii=False))
+        sys.exit(1)
+
+    device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
+
+    try:
+        cache_dir = Path(
+            os.environ.get(
+                "WHISPER_CACHE_DIR",
+                os.environ.get("AUDIO_PIPELINE_CACHE_DIR", str(Path.home() / ".loong" / "cache" / "whisper")),
+            )
+        )
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        print(f"Loading model '{args.model}' on {device}...", file=sys.stderr, flush=True)
+        model = whisper.load_model(args.model, device=device, download_root=str(cache_dir))
+
+        start_time = time.time()
+        result = model.transcribe(str(audio_path), language=args.language, verbose=False)
+        elapsed = time.time() - start_time
+
+        file_hash = get_file_hash(audio_path)
+
+        output = {
+            "hash": file_hash,
+            "filename": str(audio_path),
+            "text": result.get("text", "").strip(),
+            "language": result.get("language", args.language),
+            "segments": [
+                {
+                    "start": seg.get("start", 0),
+                    "end": seg.get("end", 0),
+                    "text": seg.get("text", "").strip(),
+                }
+                for seg in result.get("segments", [])
+            ],
+            "model": args.model,
+            "device": device,
+            "duration": elapsed,
+        }
+
+        if args.output_dir:
+            output_dir = Path(args.output_dir).expanduser().resolve()
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            trans_file = output_dir / f"{file_hash}.json"
+            with open(trans_file, "w", encoding="utf-8") as f:
+                json.dump(output, f, ensure_ascii=False, indent=2)
+
+            text_file = output_dir / f"{file_hash}.txt"
+            with open(text_file, "w", encoding="utf-8") as f:
+                f.write(output["text"])
+
+            output["transcription_file"] = str(trans_file)
+            output["text_file"] = str(text_file)
+
+        print(json.dumps(output, ensure_ascii=False))
+
+    except Exception as e:
+        print(json.dumps({"error": str(e)}, ensure_ascii=False))
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

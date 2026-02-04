@@ -1,0 +1,149 @@
+#!/bin/bash
+# query-embed: 语义搜索已处理的图片
+# Usage: query-embed "搜索文本" [output_dir] [--top N] [--paths] [--json]
+# 输出: 按相似度排序的图片 hash 列表（可选输出路径/JSON）
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PATH="$SCRIPT_DIR:$PATH"
+
+QUERY="$1"
+shift || true
+
+if [ -z "$QUERY" ]; then
+    echo "Usage: query-embed \"搜索文本\" [output_dir] [--top N] [--paths] [--json]" >&2
+    exit 1
+fi
+
+OUTPUT_DIR="${IMG_PIPELINE_OUTPUT_DIR:-$HOME/output}"
+TOP_N=10
+INCLUDE_PATHS=false
+OUTPUT_JSON=false
+
+if [ $# -gt 0 ] && [[ "$1" != -* ]]; then
+    OUTPUT_DIR="$1"
+    shift
+fi
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -n|--top)
+            TOP_N="$2"
+            shift 2
+            ;;
+        --paths)
+            INCLUDE_PATHS=true
+            shift
+            ;;
+        --json)
+            OUTPUT_JSON=true
+            shift
+            ;;
+        -h|--help)
+            echo "Usage: query-embed \"搜索文本\" [output_dir] [--top N] [--paths] [--json]" >&2
+            exit 0
+            ;;
+        *)
+            echo "Error: Unknown option: $1" >&2
+            exit 1
+            ;;
+    esac
+done
+
+if ! command -v curl &> /dev/null; then
+    echo "Error: curl not found. Please install curl." >&2
+    exit 1
+fi
+
+if ! command -v ollama &> /dev/null; then
+    echo "Error: ollama not found. Install from https://ollama.com" >&2
+    exit 1
+fi
+
+TAGS=$(curl -s --max-time 5 http://localhost:11434/api/tags 2>/dev/null || true)
+if [ -z "$TAGS" ]; then
+    echo "Error: Ollama service not running. Start: ollama serve" >&2
+    exit 1
+fi
+
+if ! echo "$TAGS" | grep -q "qwen3-embedding:0.6b"; then
+    echo "Error: model qwen3-embedding:0.6b not found. Run: ollama pull qwen3-embedding:0.6b" >&2
+    exit 1
+fi
+
+if [ ! -d "$OUTPUT_DIR/embeddings" ]; then
+    echo "Error: embeddings directory not found: $OUTPUT_DIR/embeddings" >&2
+    exit 1
+fi
+
+QUERY_EMBED=$(echo "$QUERY" | img-embed | python3 -c "import sys,json; d=json.load(sys.stdin); print(','.join(map(str,d.get('embedding', []))))")
+if [ -z "$QUERY_EMBED" ]; then
+    echo "Error: failed to create query embedding" >&2
+    exit 1
+fi
+
+TOP_N="$TOP_N" INCLUDE_PATHS="$INCLUDE_PATHS" OUTPUT_JSON="$OUTPUT_JSON" OUTPUT_DIR="$OUTPUT_DIR" QUERY_EMBED="$QUERY_EMBED" python3 << 'PYEOF'
+import json
+import math
+import os
+import sys
+
+query = [float(x) for x in os.environ["QUERY_EMBED"].split(',') if x]
+output_dir = os.environ["OUTPUT_DIR"]
+embed_dir = os.path.join(output_dir, "embeddings")
+meta_dir = os.path.join(output_dir, "metadata")
+
+include_paths = os.environ.get("INCLUDE_PATHS", "false").lower() == "true"
+output_json = os.environ.get("OUTPUT_JSON", "false").lower() == "true"
+
+def cosine_similarity(a, b):
+    dot = sum(x*y for x, y in zip(a, b))
+    norm_a = sum(x*x for x in a) ** 0.5
+    norm_b = sum(x*x for x in b) ** 0.5
+    return dot / (norm_a * norm_b) if norm_a * norm_b > 0 else 0
+
+results = []
+for fname in os.listdir(embed_dir):
+    if not fname.endswith('.json'):
+        continue
+    hash_val = fname[:-5]
+    try:
+        with open(os.path.join(embed_dir, fname)) as f:
+            data = json.load(f)
+    except Exception:
+        continue
+    if 'embedding' not in data:
+        continue
+    sim = cosine_similarity(query, data['embedding'])
+    item = {"score": sim, "hash": hash_val}
+    if include_paths:
+        meta_path = os.path.join(meta_dir, f"{hash_val}.json")
+        if os.path.exists(meta_path):
+            try:
+                with open(meta_path) as f:
+                    meta = json.load(f)
+                item["path"] = meta.get("filename")
+            except Exception:
+                item["path"] = None
+        else:
+            item["path"] = None
+    results.append(item)
+
+results.sort(key=lambda x: x["score"], reverse=True)
+
+try:
+    top_n = int(os.environ.get("TOP_N", "10"))
+except Exception:
+    top_n = 10
+
+results = results[:top_n]
+
+if output_json:
+    print(json.dumps(results, ensure_ascii=False))
+else:
+    for item in results:
+        if include_paths:
+            print(f"{item['score']:.4f} {item['hash']} {item.get('path') or ''}")
+        else:
+            print(f"{item['score']:.4f} {item['hash']}")
+PYEOF
