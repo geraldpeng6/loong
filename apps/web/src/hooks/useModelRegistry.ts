@@ -1,11 +1,17 @@
 import { useCallback, useEffect, useState } from "react";
 
-import type { ModelsConfig, ProviderCatalog, ProviderConfig } from "@/types/modelRegistry";
+import type {
+  ModelsConfig,
+  ProviderAuthStatus,
+  ProviderCatalog,
+  ProviderConfig,
+} from "@/types/modelRegistry";
 import { getAuthHeaders } from "@/lib/auth";
 
 export type ModelRegistryState = {
   catalog: ProviderCatalog[];
   config: ModelsConfig;
+  auth: Record<string, ProviderAuthStatus>;
   loading: boolean;
   error: string | null;
 };
@@ -13,6 +19,7 @@ export type ModelRegistryState = {
 const initialState: ModelRegistryState = {
   catalog: [],
   config: { providers: {} },
+  auth: {},
   loading: false,
   error: null,
 };
@@ -34,6 +41,7 @@ export const useModelRegistry = () => {
         ...prev,
         catalog: data.providers || [],
         config: data.config || { providers: {} },
+        auth: data.auth || {},
         loading: false,
       }));
     } catch (err) {

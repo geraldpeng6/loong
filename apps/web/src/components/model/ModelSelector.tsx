@@ -18,6 +18,7 @@ import type { AvailableModel, ModelState } from "@/types/gateway";
 import type {
   ModelsConfig,
   ModelEntry,
+  ProviderAuthStatus,
   ProviderCatalog,
   ProviderConfig,
 } from "@/types/modelRegistry";
@@ -28,6 +29,7 @@ export type ModelSelectorProps = {
   currentModel: ModelState | null;
   catalog: ProviderCatalog[];
   config: ModelsConfig;
+  auth: Record<string, ProviderAuthStatus>;
   onSetModel: (provider: string, modelId: string) => void;
   onAddProvider: (providerId: string, provider: ProviderConfig) => Promise<void>;
   onRefreshModels: () => void;
@@ -58,6 +60,7 @@ const ModelSelector = ({
   currentModel,
   catalog,
   config,
+  auth,
   onSetModel,
   onAddProvider,
   onRefreshModels,
@@ -115,6 +118,12 @@ const ModelSelector = ({
   const provider = selectedProvider ? providerMap.get(selectedProvider) : null;
   const providerConfig = selectedProvider ? configProviders[selectedProvider] : null;
   const providerAvailable = selectedProvider ? availableProviderSet.has(selectedProvider) : false;
+  const authStatus = selectedProvider ? auth[selectedProvider] : null;
+  const providerConfigured =
+    providerAvailable ||
+    Boolean(providerConfig) ||
+    Boolean(authStatus?.hasEnv) ||
+    Boolean(authStatus?.hasConfigKey);
 
   const providerModels = useMemo<ModelEntry[]>(() => {
     if (providerConfig?.models && providerConfig.models.length > 0) {
@@ -228,19 +237,28 @@ const ModelSelector = ({
         ],
       };
     }
-    if (!providerAvailable) {
+    if (!providerConfigured) {
+      const envVars = (authStatus?.envVars || []).filter(Boolean);
+      const steps = [] as string[];
+      if (envVars.length > 0) {
+        steps.push(`Set ${envVars.join(" / ")} on the server and restart Loong.`);
+      } else {
+        steps.push("Set the provider credentials on the server and restart Loong.");
+      }
+      if (authStatus?.loginHint) {
+        steps.push(authStatus.loginHint);
+      }
+      steps.push("Use “Add custom provider” to set API key/base URL.");
+      steps.push("Or edit ~/.pi/agent/models.json on the server, then restart Loong.");
+
       return {
         title: "Provider not configured.",
         description: "This provider is missing credentials on the server.",
-        steps: [
-          "Use “Add custom provider” to set API key/base URL.",
-          "Or edit ~/.pi/agent/models.json on the server, then restart Loong.",
-          "If the provider relies on env vars (e.g. OPENAI_API_KEY), export them on the server and restart.",
-        ],
+        steps,
       };
     }
     return null;
-  }, [pendingConfig, providerAvailable, selectedProvider]);
+  }, [authStatus, pendingConfig, providerConfigured, selectedProvider]);
 
   const showConfigNotice = Boolean(configNotice);
   const quickDisabled = !selectedProvider || quickModels.length === 0;
@@ -319,8 +337,12 @@ const ModelSelector = ({
               />
               <div className="max-h-60 overflow-y-auto rounded-md border bg-background">
                 {filteredProviders.map((item) => {
+                  const authEntry = auth[item.id];
                   const configured =
-                    availableProviderSet.has(item.id) || Boolean(configProviders[item.id]);
+                    availableProviderSet.has(item.id) ||
+                    Boolean(configProviders[item.id]) ||
+                    Boolean(authEntry?.hasEnv) ||
+                    Boolean(authEntry?.hasConfigKey);
                   const selected = item.id === selectedProvider;
                   return (
                     <button

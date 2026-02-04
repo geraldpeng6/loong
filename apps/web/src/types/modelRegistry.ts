@@ -56,6 +56,13 @@ export type ProviderConfig = {
   models?: ModelEntry[];
 };
 
+export type ProviderAuthStatus = {
+  envVars?: string[] | null;
+  loginHint?: string | null;
+  hasEnv?: boolean;
+  hasConfigKey?: boolean;
+};
+
 export type ModelsConfig = {
   providers: Record<string, ProviderConfig>;
 };

@@ -228,6 +228,7 @@ const App = () => {
                 currentModel={state.model}
                 catalog={modelRegistry.catalog}
                 config={modelRegistry.config}
+                auth={modelRegistry.auth}
                 onAddProvider={upsertProvider}
                 onRefreshModels={() => {
                   refreshModels();
