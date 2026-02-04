@@ -14,6 +14,9 @@ import sys
 import time
 from pathlib import Path
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+os.environ["PATH"] = f"{SCRIPT_DIR}:{os.environ.get('PATH', '')}"
+
 # Check ffmpeg first
 if not shutil.which("ffmpeg"):
     print("Error: ffmpeg not found. Please install ffmpeg:", file=sys.stderr)
