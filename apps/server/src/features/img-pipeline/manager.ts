@@ -85,8 +85,14 @@ export const createImgPipelineManager = ({
   let lastExitCode: number | null = null;
   let lastExitSignal: string | null = null;
 
-  const resolveWatchCmd = () =>
-    watchCmdOverride || (currentPipelineDir ? join(currentPipelineDir, "bin", "watch-images") : "");
+  const resolveWatchCmd = () => {
+    if (watchCmdOverride) return watchCmdOverride;
+    if (!currentPipelineDir) return "";
+    const direct = join(currentPipelineDir, "watch-images");
+    if (existsSync(direct)) return direct;
+    const nested = join(currentPipelineDir, "bin", "watch-images");
+    return nested;
+  };
 
   const resolveWatchArgs = () => parseArgs(currentWatchArgs);
 

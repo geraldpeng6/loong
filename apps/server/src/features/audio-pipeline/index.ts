@@ -32,6 +32,15 @@ const getBuiltinPipelinePath = () => {
   return existsSync(builtinPath) ? builtinPath : "";
 };
 
+const resolvePipelineBinary = (pipelineDir: string, binaryName: string) => {
+  if (!pipelineDir) return "";
+  const direct = join(pipelineDir, binaryName);
+  if (existsSync(direct)) return direct;
+  const nested = join(pipelineDir, "bin", binaryName);
+  if (existsSync(nested)) return nested;
+  return direct || nested;
+};
+
 export type AudioPipelineFeature = {
   routes: RouteHandler[];
   transformAgentPayload: (agent: unknown, payload: unknown) => unknown;
@@ -82,9 +91,9 @@ export const initAudioPipelineFeature = ({
   let currentOutputDir = outputDirEnv.trim();
   let currentInputDirs = normalizeDirs(inputDirsEnv);
   let currentQueryCmd =
-    queryCmdOverride || (currentPipelineDir ? join(currentPipelineDir, "bin", "query-audio") : "");
+    queryCmdOverride || resolvePipelineBinary(currentPipelineDir, "query-audio");
   let currentWatchCmd =
-    watchCmdOverride || (currentPipelineDir ? join(currentPipelineDir, "bin", "watch-audio") : "");
+    watchCmdOverride || resolvePipelineBinary(currentPipelineDir, "watch-audio");
 
   let runAudioPipelineQuery = createAudioPipelineQuery({
     queryCmd: currentQueryCmd,
@@ -122,10 +131,8 @@ export const initAudioPipelineFeature = ({
       update.outputDir != null ? String(update.outputDir || "").trim() : currentOutputDir;
     const nextInputDirs = update.inputDirs ? normalizeDirs(update.inputDirs) : currentInputDirs;
 
-    const nextWatchCmd =
-      watchCmdOverride || (nextPipelineDir ? join(nextPipelineDir, "bin", "watch-audio") : "");
-    const nextQueryCmd =
-      queryCmdOverride || (nextPipelineDir ? join(nextPipelineDir, "bin", "query-audio") : "");
+    const nextWatchCmd = watchCmdOverride || resolvePipelineBinary(nextPipelineDir, "watch-audio");
+    const nextQueryCmd = queryCmdOverride || resolvePipelineBinary(nextPipelineDir, "query-audio");
 
     const nextAllowRoots =
       allowRootsRaw.length > 0 ? allowRootsRaw : [...nextInputDirs, nextOutputDir];

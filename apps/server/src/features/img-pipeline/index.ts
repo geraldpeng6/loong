@@ -33,6 +33,15 @@ const getBuiltinPipelinePath = () => {
   return existsSync(builtinPath) ? builtinPath : "";
 };
 
+const resolvePipelineBinary = (pipelineDir: string, binaryName: string) => {
+  if (!pipelineDir) return "";
+  const direct = join(pipelineDir, binaryName);
+  if (existsSync(direct)) return direct;
+  const nested = join(pipelineDir, "bin", binaryName);
+  if (existsSync(nested)) return nested;
+  return direct || nested;
+};
+
 export type ImgPipelineFeature = {
   routes: RouteHandler[];
   transformAgentPayload: (agent: unknown, payload: unknown) => unknown;
@@ -87,9 +96,9 @@ export const initImgPipelineFeature = ({
   let currentOutputDir = outputDirEnv.trim();
   let currentInputDirs = normalizeDirs(inputDirsEnv);
   let currentQueryCmd =
-    queryCmdOverride || (currentPipelineDir ? join(currentPipelineDir, "bin", "query-embed") : "");
+    queryCmdOverride || resolvePipelineBinary(currentPipelineDir, "query-embed");
   let currentWatchCmd =
-    watchCmdOverride || (currentPipelineDir ? join(currentPipelineDir, "bin", "watch-images") : "");
+    watchCmdOverride || resolvePipelineBinary(currentPipelineDir, "watch-images");
 
   let runImgPipelineQuery = createImgPipelineQuery({
     queryCmd: currentQueryCmd,
@@ -127,10 +136,8 @@ export const initImgPipelineFeature = ({
       update.outputDir != null ? String(update.outputDir || "").trim() : currentOutputDir;
     const nextInputDirs = update.inputDirs ? normalizeDirs(update.inputDirs) : currentInputDirs;
 
-    const nextWatchCmd =
-      watchCmdOverride || (nextPipelineDir ? join(nextPipelineDir, "bin", "watch-images") : "");
-    const nextQueryCmd =
-      queryCmdOverride || (nextPipelineDir ? join(nextPipelineDir, "bin", "query-embed") : "");
+    const nextWatchCmd = watchCmdOverride || resolvePipelineBinary(nextPipelineDir, "watch-images");
+    const nextQueryCmd = queryCmdOverride || resolvePipelineBinary(nextPipelineDir, "query-embed");
 
     const nextAllowRoots =
       allowRootsRaw.length > 0 ? allowRootsRaw : [...nextInputDirs, nextOutputDir];
