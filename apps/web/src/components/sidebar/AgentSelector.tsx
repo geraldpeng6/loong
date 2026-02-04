@@ -88,7 +88,12 @@ const AgentSelector = ({
         {agents.map((agent) => {
           const imageSrc = resolveAgentImage(agent.id);
           return (
-            <SelectItem key={agent.id} value={agent.id} className="pl-2 pr-2 py-2">
+            <SelectItem
+              key={agent.id}
+              value={agent.id}
+              indicatorSide="right"
+              className="pl-2 pr-8 py-2"
+            >
               <div className="flex items-center gap-3">
                 <img
                   src={imageSrc}
