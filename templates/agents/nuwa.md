@@ -1,6 +1,8 @@
 ---
 name: nuwa
 description: 造物者 - 创建和更新 agent 与 skill
+provider: kimi-coding
+model: k2p5
 tools: read, write, edit, bash
 thinkingLevel: medium
 noSkills: true

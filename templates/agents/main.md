@@ -1,6 +1,8 @@
 ---
 name: main
 description: 主调度者 - 动态发现agent，智能分派任务，不亲自执行
+provider: kimi-coding
+model: k2p5
 tools: read, bash
 thinkingLevel: medium
 noSkills: true

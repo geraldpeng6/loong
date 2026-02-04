@@ -1,6 +1,8 @@
 ---
 name: taotie
 description: 饕餮 - 网络搜索与数据处理专家（搜集、整理、分析、报告）
+provider: kimi-coding
+model: k2p5
 tools: read, write, edit, bash
 thinkingLevel: medium
 skills:
