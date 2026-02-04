@@ -25,6 +25,14 @@ const parseEnvList = (value: string | undefined) =>
 const normalizeDirs = (dirs: string[]) =>
   Array.from(new Set(dirs.map((dir) => dir.trim()).filter(Boolean)));
 
+// Get built-in pipeline path relative to server directory
+const getBuiltinPipelinePath = () => {
+  const __dirname = dirname(fileURLToPath(import.meta.url));
+  const serverDir = resolve(__dirname, "..", "..", "..");
+  const builtinPath = join(serverDir, "bin", "img-pipeline");
+  return existsSync(builtinPath) ? builtinPath : "";
+};
+
 export type ImgPipelineFeature = {
   routes: RouteHandler[];
   transformAgentPayload: (agent: unknown, payload: unknown) => unknown;
@@ -45,7 +53,8 @@ export const initImgPipelineFeature = ({
   logger?: { info?: (message: string) => void; warn?: (message: string) => void };
   env?: NodeJS.ProcessEnv;
 }): ImgPipelineFeature => {
-  const pipelineDirEnv = env.IMG_PIPELINE_DIR || "";
+  const builtinPipelineDir = getBuiltinPipelinePath();
+  const pipelineDirEnv = env.IMG_PIPELINE_DIR || builtinPipelineDir;
   const queryCmdOverride = env.IMG_PIPELINE_QUERY_CMD || "";
   const watchCmdOverride = env.IMG_PIPELINE_WATCH_CMD || "";
   const outputDirEnv = env.IMG_PIPELINE_OUTPUT_DIR || join(homedir(), "output");

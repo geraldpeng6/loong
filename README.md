@@ -37,10 +37,11 @@ export LOONG_NOTIFY_LOCAL_ONLY=1
 export LOONG_MAX_BODY_BYTES=262144
 export PI_EDIT_ROOT=$HOME/code/loong
 
-# img-pipeline integration (optional)
-export IMG_PIPELINE_DIR=$HOME/projects/img-pipeline
-# or explicitly set query-embed path:
-# export IMG_PIPELINE_QUERY_CMD=/path/to/img-pipeline/bin/query-embed
+# img-pipeline / audio-pipeline integration (optional)
+# Built-in CLI tools are used by default from apps/server/bin/
+# Override paths only if needed:
+# export IMG_PIPELINE_DIR=$HOME/projects/img-pipeline
+# export AUDIO_PIPELINE_DIR=$HOME/projects/audio-pipeline
 # optional limits for /api/pipeline/query-media:
 # export IMG_PIPELINE_MAX_TOP=20
 # export IMG_PIPELINE_MAX_BYTES=$((5*1024*1024))
@@ -259,7 +260,8 @@ Response:
 
 Notes:
 
-- Requires `IMG_PIPELINE_DIR` or `IMG_PIPELINE_QUERY_CMD`.
+- Uses built-in CLI tools from `apps/server/bin/img-pipeline/` by default.
+- Override with `IMG_PIPELINE_DIR` or `IMG_PIPELINE_QUERY_CMD` if needed.
 - Limits are enforced by `IMG_PIPELINE_MAX_TOP/IMG_PIPELINE_MAX_BYTES/IMG_PIPELINE_MAX_TOTAL_BYTES`.
 - `allowedMimeTypes` supports prefixes (e.g., `image/`, `audio/`).
 

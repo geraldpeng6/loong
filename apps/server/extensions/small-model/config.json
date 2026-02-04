@@ -1,0 +1,7 @@
+{
+  "provider": "cerebras",
+  "modelId": "llama3.1-8b",
+  "reasoningEffort": "low",
+  "temperature": 0.2,
+  "maxTokens": 128
+}

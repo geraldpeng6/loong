@@ -24,6 +24,14 @@ const parseEnvList = (value: string | undefined) =>
 const normalizeDirs = (dirs: string[]) =>
   Array.from(new Set(dirs.map((dir) => dir.trim()).filter(Boolean)));
 
+// Get built-in pipeline path relative to server directory
+const getBuiltinPipelinePath = () => {
+  const __dirname = dirname(fileURLToPath(import.meta.url));
+  const serverDir = resolve(__dirname, "..", "..", "..");
+  const builtinPath = join(serverDir, "bin", "audio-pipeline");
+  return existsSync(builtinPath) ? builtinPath : "";
+};
+
 export type AudioPipelineFeature = {
   routes: RouteHandler[];
   transformAgentPayload: (agent: unknown, payload: unknown) => unknown;
@@ -44,10 +52,11 @@ export const initAudioPipelineFeature = ({
   logger?: { info?: (message: string) => void; warn?: (message: string) => void };
   env?: NodeJS.ProcessEnv;
 }): AudioPipelineFeature => {
-  const pipelineDirEnv = env.AUDIO_PIPELINE_DIR || join(homedir(), "projects", "audio-pipeline");
+  const builtinPipelineDir = getBuiltinPipelinePath();
+  const pipelineDirEnv = env.AUDIO_PIPELINE_DIR || builtinPipelineDir;
   const queryCmdOverride = env.AUDIO_PIPELINE_QUERY_CMD || "";
   const watchCmdOverride = env.AUDIO_PIPELINE_WATCH_CMD || "";
-  const outputDirEnv = env.AUDIO_PIPELINE_OUTPUT_DIR || join(pipelineDirEnv, "output");
+  const outputDirEnv = env.AUDIO_PIPELINE_OUTPUT_DIR || join(homedir(), "output", "audio-pipeline");
   const inputDirsEnvRaw = parseEnvList(
     env.AUDIO_PIPELINE_INPUT_DIRS || env.AUDIO_PIPELINE_INPUT_DIR,
   );
@@ -65,7 +74,9 @@ export const initAudioPipelineFeature = ({
 
   const flagRaw = env.LOONG_FEATURE_AUDIO_PIPELINE;
   const hasExplicitFlag = flagRaw != null && flagRaw !== "";
-  const enabled = hasExplicitFlag ? parseEnvFlag(flagRaw) : Boolean(existsSync(pipelineDirEnv));
+  const enabled = hasExplicitFlag
+    ? parseEnvFlag(flagRaw)
+    : Boolean(pipelineDirEnv || queryCmdOverride || watchCmdOverride);
 
   let currentPipelineDir = pipelineDirEnv.trim();
   let currentOutputDir = outputDirEnv.trim();
