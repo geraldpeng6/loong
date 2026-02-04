@@ -114,6 +114,7 @@ const ModelSelector = ({
 
   const provider = selectedProvider ? providerMap.get(selectedProvider) : null;
   const providerConfig = selectedProvider ? configProviders[selectedProvider] : null;
+  const providerAvailable = selectedProvider ? availableProviderSet.has(selectedProvider) : false;
 
   const providerModels = useMemo<ModelEntry[]>(() => {
     if (providerConfig?.models && providerConfig.models.length > 0) {
@@ -193,6 +194,7 @@ const ModelSelector = ({
       setPendingConfig(false);
     } else {
       setPendingConfig(true);
+      setSelectorOpen(true);
     }
   };
 
@@ -213,10 +215,34 @@ const ModelSelector = ({
     setTimeout(onRefreshModels, 1200);
   };
 
-  const isProviderConfigured = selectedProvider
-    ? availableProviderSet.has(selectedProvider) || Boolean(configProviders[selectedProvider])
-    : false;
-  const showConfigNotice = selectedProvider && (!isProviderConfigured || pendingConfig);
+  const configNotice = useMemo(() => {
+    if (!selectedProvider) return null;
+    if (pendingConfig) {
+      return {
+        title: "Model not available for this provider.",
+        description:
+          "The selected model isn't ready on the server yet. Add it to the provider config or refresh after updating credentials.",
+        steps: [
+          "Use “Add custom provider” to set API key/base URL and the model list.",
+          "Or edit ~/.pi/agent/models.json on the server, then restart Loong.",
+        ],
+      };
+    }
+    if (!providerAvailable) {
+      return {
+        title: "Provider not configured.",
+        description: "This provider is missing credentials on the server.",
+        steps: [
+          "Use “Add custom provider” to set API key/base URL.",
+          "Or edit ~/.pi/agent/models.json on the server, then restart Loong.",
+          "If the provider relies on env vars (e.g. OPENAI_API_KEY), export them on the server and restart.",
+        ],
+      };
+    }
+    return null;
+  }, [pendingConfig, providerAvailable, selectedProvider]);
+
+  const showConfigNotice = Boolean(configNotice);
   const quickDisabled = !selectedProvider || quickModels.length === 0;
 
   return (
@@ -267,10 +293,15 @@ const ModelSelector = ({
             <DialogTitle>Model selection</DialogTitle>
           </DialogHeader>
 
-          {showConfigNotice ? (
+          {showConfigNotice && configNotice ? (
             <div className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">
-              <span className="font-semibold">Provider not configured.</span> Add credentials in
-              models.json or use the custom provider dialog.
+              <div className="font-semibold text-foreground">{configNotice.title}</div>
+              <div className="mt-1 text-muted-foreground">{configNotice.description}</div>
+              <ul className="mt-2 list-disc space-y-1 pl-4">
+                {configNotice.steps.map((step) => (
+                  <li key={step}>{step}</li>
+                ))}
+              </ul>
             </div>
           ) : null}
 
