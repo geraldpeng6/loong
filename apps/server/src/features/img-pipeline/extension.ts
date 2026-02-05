@@ -24,6 +24,7 @@ const DEFAULT_TOP = Number(process.env.LOONG_IMG_TOP || 6);
 const DEFAULT_MAX_BYTES = Number(process.env.LOONG_IMG_MAX_BYTES || 512 * 1024);
 const DEFAULT_MAX_TOTAL_BYTES = Number(process.env.LOONG_IMG_MAX_TOTAL_BYTES || 2 * 1024 * 1024);
 const DEFAULT_TIMEOUT_MS = Number(process.env.LOONG_IMG_TIMEOUT_MS || 20000);
+const SLASH_ARGS_TTL_MS = Number(process.env.LOONG_IMG_SLASH_ARGS_TTL_MS || 120000);
 
 // Only enable for specific agents
 const ALLOWED_AGENTS = ["qiuniu", "囚牛"];
@@ -92,6 +93,23 @@ const formatScore = (score?: number) => {
   return Number(score).toFixed(3);
 };
 
+type PendingImgSlashArgs = {
+  query: string;
+  top?: number;
+  minScore?: number;
+  createdAt: number;
+};
+
+let pendingImgSlashArgs: PendingImgSlashArgs | null = null;
+
+const consumePendingImgSlashArgs = (): PendingImgSlashArgs | null => {
+  const pending = pendingImgSlashArgs;
+  pendingImgSlashArgs = null;
+  if (!pending) return null;
+  if (Date.now() - pending.createdAt > SLASH_ARGS_TTL_MS) return null;
+  return pending;
+};
+
 export default function registerImgSearch(pi: ExtensionAPI) {
   // Check if this agent is allowed to use this tool
   const agentId = process.env.LOONG_AGENT_ID || "";
@@ -109,6 +127,11 @@ export default function registerImgSearch(pi: ExtensionAPI) {
       "Search through indexed images (photos, screenshots, diagrams, etc.). Use when user asks about images, pictures, or photos.",
     parameters: ImgSearchSchema,
     async execute(_toolCallId, params) {
+      const pendingSlashArgs = consumePendingImgSlashArgs();
+      const query = params.query || pendingSlashArgs?.query || "";
+      const top = params.top ?? pendingSlashArgs?.top ?? DEFAULT_TOP;
+      const minScore = params.minScore ?? pendingSlashArgs?.minScore;
+
       const port = process.env.LOONG_PORT || "17800";
       const password = process.env.LOONG_PASSWORD || "";
       const url = `http://localhost:${port}/api/pipeline/query-media`;
@@ -117,9 +140,9 @@ export default function registerImgSearch(pi: ExtensionAPI) {
       if (auth) headers.authorization = auth;
 
       const payload = {
-        query: params.query,
-        top: params.top ?? DEFAULT_TOP,
-        minScore: params.minScore,
+        query,
+        top,
+        minScore,
         outputDir: undefined,
         includeContent: false,
         includePaths: true,
@@ -159,8 +182,8 @@ export default function registerImgSearch(pi: ExtensionAPI) {
         const results = Array.isArray(data.results) ? data.results : [];
         if (results.length === 0) {
           return {
-            content: [{ type: "text", text: `No image results for "${params.query}".` }],
-            details: { query: params.query, results: [], skipped: data.skipped || [] },
+            content: [{ type: "text", text: `No image results for "${query}".` }],
+            details: { query, results: [], skipped: data.skipped || [] },
           };
         }
 
@@ -169,7 +192,7 @@ export default function registerImgSearch(pi: ExtensionAPI) {
           return `${index + 1}. score=${formatScore(item.score)} ${label}`;
         });
         const summary = [
-          `Image search for "${params.query}" (${results.length} result(s))`,
+          `Image search for "${query}" (${results.length} result(s))`,
           ...lines,
         ].join("\n");
 
@@ -189,7 +212,7 @@ export default function registerImgSearch(pi: ExtensionAPI) {
         return {
           content,
           details: {
-            query: params.query,
+            query,
             outputDir: data.outputDir || null,
             results: results.map((item) => ({
               score: item.score,
@@ -217,17 +240,35 @@ export default function registerImgSearch(pi: ExtensionAPI) {
       const remainder = text.replace(/^\/img\b/i, "").trim();
       const parsed = parseImgArgs(remainder);
       if (!parsed.query) {
+        pendingImgSlashArgs = null;
         if (ctx.hasUI) {
           ctx.ui.notify("Usage: /img <query> [--top N] [--min score]", "info");
         }
         return { action: "handled" };
       }
 
+      pendingImgSlashArgs = {
+        query: parsed.query,
+        top: parsed.top,
+        minScore: parsed.minScore,
+        createdAt: Date.now(),
+      };
+
+      const constraints = [
+        parsed.top !== undefined ? `top=${parsed.top}` : null,
+        parsed.minScore !== undefined ? `minScore=${parsed.minScore}` : null,
+      ]
+        .filter(Boolean)
+        .join(", ");
+      const constraintsText = constraints ? ` Use exact parameters (${constraints}).` : "";
+
       return {
         action: "transform",
-        text: `Search for image content: "${parsed.query}"`,
+        text: `Search for image content: "${parsed.query}".${constraintsText}`,
       };
     }
+
+    pendingImgSlashArgs = null;
 
     return { action: "continue" };
   });

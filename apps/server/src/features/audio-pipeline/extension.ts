@@ -20,6 +20,7 @@ type AudioSearchResponse = {
 
 const DEFAULT_TOP = Number(process.env.LOONG_AUDIO_TOP || 5);
 const DEFAULT_TIMEOUT_MS = Number(process.env.LOONG_AUDIO_TIMEOUT_MS || 30000);
+const SLASH_ARGS_TTL_MS = Number(process.env.LOONG_AUDIO_SLASH_ARGS_TTL_MS || 120000);
 
 // Only enable for specific agents
 const ALLOWED_AGENTS = ["qiuniu", "囚牛"];
@@ -88,6 +89,23 @@ const formatScore = (score?: number) => {
   return Number(score).toFixed(3);
 };
 
+type PendingAudioSlashArgs = {
+  query: string;
+  top?: number;
+  minScore?: number;
+  createdAt: number;
+};
+
+let pendingAudioSlashArgs: PendingAudioSlashArgs | null = null;
+
+const consumePendingAudioSlashArgs = (): PendingAudioSlashArgs | null => {
+  const pending = pendingAudioSlashArgs;
+  pendingAudioSlashArgs = null;
+  if (!pending) return null;
+  if (Date.now() - pending.createdAt > SLASH_ARGS_TTL_MS) return null;
+  return pending;
+};
+
 export default function registerAudioSearch(pi: ExtensionAPI) {
   // Check if this agent is allowed to use this tool
   const agentId = process.env.LOONG_AGENT_ID || "";
@@ -105,6 +123,11 @@ export default function registerAudioSearch(pi: ExtensionAPI) {
       "Search through transcribed audio files (meeting recordings, voice memos, etc.). Use when user asks about audio content, recordings, or meetings.",
     parameters: AudioSearchSchema,
     async execute(_toolCallId, params) {
+      const pendingSlashArgs = consumePendingAudioSlashArgs();
+      const query = params.query || pendingSlashArgs?.query || "";
+      const top = params.top ?? pendingSlashArgs?.top ?? DEFAULT_TOP;
+      const minScore = params.minScore ?? pendingSlashArgs?.minScore;
+
       const port = process.env.LOONG_PORT || "17800";
       const password = process.env.LOONG_PASSWORD || "";
       const url = `http://localhost:${port}/api/audio-pipeline/query`;
@@ -113,9 +136,9 @@ export default function registerAudioSearch(pi: ExtensionAPI) {
       if (auth) headers.authorization = auth;
 
       const payload = {
-        query: params.query,
-        top: params.top ?? DEFAULT_TOP,
-        minScore: params.minScore,
+        query,
+        top,
+        minScore,
         includeTranscription: true,
       };
 
@@ -150,8 +173,8 @@ export default function registerAudioSearch(pi: ExtensionAPI) {
         const results = Array.isArray(data.results) ? data.results : [];
         if (results.length === 0) {
           return {
-            content: [{ type: "text", text: `No audio results for "${params.query}".` }],
-            details: { query: params.query, results: [], skipped: data.skipped || [] },
+            content: [{ type: "text", text: `No audio results for "${query}".` }],
+            details: { query, results: [], skipped: data.skipped || [] },
           };
         }
 
@@ -161,7 +184,7 @@ export default function registerAudioSearch(pi: ExtensionAPI) {
           return `${index + 1}. score=${formatScore(item.score)} ${label}${preview}`;
         });
         const summary = [
-          `Audio search for "${params.query}" (${results.length} result(s))`,
+          `Audio search for "${query}" (${results.length} result(s))`,
           ...lines,
         ].join("\n");
 
@@ -180,7 +203,7 @@ export default function registerAudioSearch(pi: ExtensionAPI) {
         return {
           content,
           details: {
-            query: params.query,
+            query,
             outputDir: data.outputDir || null,
             results: results.map((item) => ({
               score: item.score,
@@ -207,17 +230,35 @@ export default function registerAudioSearch(pi: ExtensionAPI) {
       const remainder = text.replace(/^\/audio\b/i, "").trim();
       const parsed = parseAudioArgs(remainder);
       if (!parsed.query) {
+        pendingAudioSlashArgs = null;
         if (ctx.hasUI) {
           ctx.ui.notify("Usage: /audio <query> [--top N] [--min score]", "info");
         }
         return { action: "handled" };
       }
 
+      pendingAudioSlashArgs = {
+        query: parsed.query,
+        top: parsed.top,
+        minScore: parsed.minScore,
+        createdAt: Date.now(),
+      };
+
+      const constraints = [
+        parsed.top !== undefined ? `top=${parsed.top}` : null,
+        parsed.minScore !== undefined ? `minScore=${parsed.minScore}` : null,
+      ]
+        .filter(Boolean)
+        .join(", ");
+      const constraintsText = constraints ? ` Use exact parameters (${constraints}).` : "";
+
       return {
         action: "transform",
-        text: `Search for audio content: "${parsed.query}"`,
+        text: `Search for audio content: "${parsed.query}".${constraintsText}`,
       };
     }
+
+    pendingAudioSlashArgs = null;
 
     return { action: "continue" };
   });
