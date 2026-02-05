@@ -19,10 +19,19 @@ export type SessionEntry = {
   isCurrent?: boolean;
 };
 
+export type ToolCallBlock = {
+  type: "toolCall" | "tool_call";
+  id?: string;
+  name?: string;
+  arguments?: Record<string, unknown> | string;
+  partialJson?: string;
+};
+
 export type MessageBlock =
   | { type: "text"; text: string }
   | { type: "input_text"; text: string }
-  | { type: "image"; data: string; mimeType?: string };
+  | { type: "image"; data: string; mimeType?: string }
+  | ToolCallBlock;
 
 export type GatewayMessage = {
   role: "user" | "user-with-attachments" | "assistant" | "toolResult" | "system";
@@ -35,6 +44,11 @@ export type GatewayMessage = {
     preview?: string;
     url?: string;
   }>;
+  stopReason?: string;
+  errorMessage?: string;
+  error?: { message?: string };
+  toolName?: string;
+  toolCallId?: string;
 };
 
 export type ForkMessage = {

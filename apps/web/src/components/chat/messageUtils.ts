@@ -1,4 +1,4 @@
-import type { GatewayMessage } from "@/types/gateway";
+import type { GatewayMessage, ToolCallBlock } from "@/types/gateway";
 
 export type AttachmentItem = {
   kind: "image" | "audio" | "video" | "file";
@@ -7,6 +7,13 @@ export type AttachmentItem = {
   fileName: string;
   preview?: string | null;
   url?: string | null;
+};
+
+export type ToolCallItem = {
+  id?: string;
+  name?: string;
+  arguments?: Record<string, unknown> | string;
+  partialJson?: string;
 };
 
 export const extractText = (content: GatewayMessage["content"]) => {
@@ -22,6 +29,21 @@ export const extractText = (content: GatewayMessage["content"]) => {
       .join("");
   }
   return "";
+};
+
+export const extractToolCalls = (content: GatewayMessage["content"]) => {
+  if (!Array.isArray(content)) return [] as ToolCallItem[];
+  return content
+    .filter((block): block is ToolCallBlock => {
+      if (!block || typeof block !== "object") return false;
+      return block.type === "toolCall" || block.type === "tool_call";
+    })
+    .map((block) => ({
+      id: block.id,
+      name: block.name,
+      arguments: block.arguments,
+      partialJson: block.partialJson,
+    }));
 };
 
 export const extractAttachments = (message: GatewayMessage): AttachmentItem[] => {

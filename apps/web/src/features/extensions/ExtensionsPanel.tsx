@@ -105,7 +105,7 @@ const ExtensionsPanel = () => {
             Extension
           </Button>
         </DialogTrigger>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg w-[calc(100%-2rem)] max-h-[85vh] overflow-y-auto sm:w-full">
           <DialogHeader>
             <DialogTitle>Extensions</DialogTitle>
             <DialogDescription>

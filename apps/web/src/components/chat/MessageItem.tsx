@@ -11,15 +11,28 @@ import MediaGrid from "@/components/chat/MediaGrid";
 import {
   extractAttachments,
   extractText,
+  extractToolCalls,
   type AttachmentItem,
+  type ToolCallItem,
 } from "@/components/chat/messageUtils";
-import { Image, FileAudio, FileVideo, FileText, Download, ZoomIn } from "lucide-react";
+import {
+  Image,
+  FileAudio,
+  FileVideo,
+  FileText,
+  Download,
+  ZoomIn,
+  Wrench,
+  AlertTriangle,
+} from "lucide-react";
 import { getFileKind } from "@/types/upload";
 
 export type MessageItemProps = {
   message: GatewayMessage;
   forkEntryId?: string | null;
   onFork?: (entryId: string) => void;
+  toolCallsOverride?: ToolCallItem[];
+  toolResults?: GatewayMessage[];
 };
 
 const formatTimestamp = (timestamp?: string | number) => {
@@ -36,12 +49,68 @@ const formatTimestamp = (timestamp?: string | number) => {
   });
 };
 
-const MessageItem = ({ message, forkEntryId, onFork }: MessageItemProps) => {
+const getMessageError = (message: GatewayMessage) => {
+  if (typeof message.errorMessage === "string" && message.errorMessage.trim()) {
+    return message.errorMessage.trim();
+  }
+  if (typeof message.error?.message === "string" && message.error.message.trim()) {
+    return message.error.message.trim();
+  }
+  if (message.stopReason === "error") {
+    return "模型调用失败，请检查 API Key 或模型配置。";
+  }
+  return null;
+};
+
+const formatToolArguments = (toolCall: ToolCallItem) => {
+  if (typeof toolCall.arguments === "string" && toolCall.arguments.trim()) {
+    return toolCall.arguments.trim();
+  }
+  if (toolCall.arguments && typeof toolCall.arguments === "object") {
+    try {
+      return JSON.stringify(toolCall.arguments, null, 2);
+    } catch {
+      return String(toolCall.arguments);
+    }
+  }
+  if (typeof toolCall.partialJson === "string" && toolCall.partialJson.trim()) {
+    return toolCall.partialJson.trim();
+  }
+  return "";
+};
+
+const MessageItem = ({
+  message,
+  forkEntryId,
+  onFork,
+  toolCallsOverride,
+  toolResults,
+}: MessageItemProps) => {
   const isUser = message.role === "user" || message.role === "user-with-attachments";
   const isTool = message.role === "toolResult";
   const isSystem = message.role === "system";
   const text = extractText(message.content);
+  const toolCalls = toolCallsOverride ?? extractToolCalls(message.content);
+  const errorText = getMessageError(message);
   const attachments = extractAttachments(message);
+  const combinedToolResults =
+    Array.isArray(toolResults) && toolResults.length > 0 ? toolResults : null;
+  const combinedResultText = combinedToolResults
+    ? combinedToolResults
+        .map((result) => extractText(result.content))
+        .filter((value) => value.trim().length > 0)
+        .join("\n")
+    : "";
+  const combinedResultAttachments = combinedToolResults
+    ? combinedToolResults.flatMap((result) => extractAttachments(result))
+    : [];
+  const combinedMediaAttachments = combinedResultAttachments.filter(
+    (attachment) => attachment.kind === "image" || attachment.kind === "video",
+  );
+  const combinedOtherAttachments = combinedResultAttachments.filter(
+    (attachment) => attachment.kind !== "image" && attachment.kind !== "video",
+  );
+  const useCombinedMediaGrid = combinedMediaAttachments.length > 1;
   const mediaAttachments = attachments.filter(
     (attachment) => attachment.kind === "image" || attachment.kind === "video",
   );
@@ -50,7 +119,19 @@ const MessageItem = ({ message, forkEntryId, onFork }: MessageItemProps) => {
   );
   const useMediaGrid = mediaAttachments.length > 1;
   const timestamp = formatTimestamp(message.timestamp);
+  const hasText = text.trim().length > 0;
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
+
+  if (isSystem) {
+    return (
+      <div className="flex w-full justify-center py-2">
+        <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+          <span>{text}</span>
+          {timestamp ? <span>· {timestamp}</span> : null}
+        </div>
+      </div>
+    );
+  }
 
   const renderAttachment = (attachment: AttachmentItem, index: number) => {
     const dataUrl = attachment.data
@@ -174,6 +255,122 @@ const MessageItem = ({ message, forkEntryId, onFork }: MessageItemProps) => {
     );
   };
 
+  const renderToolCall = (toolCall: ToolCallItem, index: number) => {
+    const argsText = formatToolArguments(toolCall);
+    const toolName = toolCall.name || "工具";
+    return (
+      <details
+        key={`${toolCall.id || toolName}-${index}`}
+        className="w-full rounded-lg border bg-muted/50 px-3 py-2 text-xs"
+      >
+        <summary className="flex cursor-pointer items-center gap-2 text-muted-foreground">
+          <Wrench size={14} />
+          <span className="text-foreground">{toolName}</span>
+        </summary>
+        {argsText ? (
+          <pre className="mt-2 whitespace-pre-wrap text-xs text-foreground">{argsText}</pre>
+        ) : (
+          <p className="mt-2 text-xs text-muted-foreground">无参数</p>
+        )}
+      </details>
+    );
+  };
+
+  const renderToolResult = () => {
+    const toolName = message.toolName || "工具";
+    return (
+      <details className="w-full rounded-lg border bg-muted/70 px-3 py-2 text-xs">
+        <summary className="flex cursor-pointer items-center gap-2 text-muted-foreground">
+          <Wrench size={14} />
+          <span className="text-foreground">{toolName}</span>
+        </summary>
+        {hasText ? (
+          <div className="mt-2 text-foreground">
+            <Markdown text={text} />
+          </div>
+        ) : (
+          <p className="mt-2 text-xs text-muted-foreground">无输出</p>
+        )}
+      </details>
+    );
+  };
+
+  const renderToolCallResult = () => {
+    if (!combinedToolResults || toolCalls.length === 0) return null;
+    const toolNames = [
+      ...toolCalls.map((call) => call.name).filter(Boolean),
+      ...combinedToolResults.map((result) => result.toolName).filter(Boolean),
+    ];
+    const uniqueToolNames = Array.from(new Set(toolNames));
+    const toolLabel =
+      uniqueToolNames.length === 0
+        ? "工具"
+        : uniqueToolNames.length === 1
+          ? uniqueToolNames[0]
+          : `${uniqueToolNames[0]} +${uniqueToolNames.length - 1}`;
+
+    return (
+      <details className="w-full rounded-lg border bg-muted/70 px-3 py-2 text-xs">
+        <summary className="flex cursor-pointer items-center gap-2 text-muted-foreground">
+          <Wrench size={14} />
+          <span className="text-foreground">{toolLabel}</span>
+        </summary>
+        <div className="mt-2 flex flex-col gap-3">
+          <div>
+            <p className="text-[11px] text-muted-foreground">命令</p>
+            {toolCalls.map((call, index) => {
+              const argsText = formatToolArguments(call);
+              const callLabel = call.name || `工具 ${index + 1}`;
+              return (
+                <div key={`${call.id || callLabel}-${index}`} className="mt-1">
+                  {toolCalls.length > 1 ? (
+                    <p className="text-[11px] text-muted-foreground">{callLabel}</p>
+                  ) : null}
+                  {argsText ? (
+                    <pre className="whitespace-pre-wrap text-xs text-foreground">{argsText}</pre>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">无参数</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div>
+            <p className="text-[11px] text-muted-foreground">结果</p>
+            {combinedResultText ? (
+              <div className="mt-1 text-foreground">
+                <Markdown text={combinedResultText} />
+              </div>
+            ) : (
+              <p className="mt-1 text-xs text-muted-foreground">无输出</p>
+            )}
+            {combinedResultAttachments.length > 0 ? (
+              useCombinedMediaGrid ? (
+                <div className="mt-2 flex w-full flex-col gap-2">
+                  <MediaGrid attachments={combinedMediaAttachments} />
+                  {combinedOtherAttachments.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {combinedOtherAttachments.map(renderAttachment)}
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {combinedResultAttachments.map(renderAttachment)}
+                </div>
+              )
+            ) : null}
+          </div>
+        </div>
+      </details>
+    );
+  };
+
+  const showTextBubble = hasText && !isTool;
+  const showToolCalls = !isTool && !combinedToolResults && toolCalls.length > 0;
+  const showCombinedToolGroup = !isTool && !!combinedToolResults && toolCalls.length > 0;
+  const showError = !isTool && !!errorText;
+
   return (
     <>
       <div className={cn("w-full", isUser ? "flex justify-end" : "flex justify-start")}>
@@ -183,20 +380,34 @@ const MessageItem = ({ message, forkEntryId, onFork }: MessageItemProps) => {
             isUser ? "max-w-[85%] items-end sm:max-w-[70%]" : "max-w-full items-start",
           )}
         >
-          <div
-            className={cn(
-              "max-w-full",
-              isUser
-                ? "w-fit rounded-2xl bg-foreground px-4 py-3 text-background"
-                : "w-full px-0 py-2",
-              !isUser && !isTool && !isSystem && "bg-transparent",
-              isTool && "w-full rounded-lg bg-muted/70 px-4 py-3 font-mono text-xs",
-              isSystem &&
-                "w-full rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900",
-            )}
-          >
-            <Markdown text={text} />
-          </div>
+          {isTool ? (
+            <div className="w-full">{renderToolResult()}</div>
+          ) : showTextBubble ? (
+            <div
+              className={cn(
+                "max-w-full",
+                isUser
+                  ? "w-fit rounded-2xl bg-foreground px-4 py-3 text-background"
+                  : "w-full px-0 py-2",
+                !isUser && "bg-transparent",
+              )}
+            >
+              <Markdown text={text} />
+            </div>
+          ) : null}
+          {showCombinedToolGroup ? <div className="w-full">{renderToolCallResult()}</div> : null}
+          {showToolCalls ? (
+            <div className="flex w-full flex-col gap-2">{toolCalls.map(renderToolCall)}</div>
+          ) : null}
+          {showError ? (
+            <div className="w-full rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-red-700">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <AlertTriangle size={16} />
+                <span>调用失败</span>
+              </div>
+              <pre className="mt-1 whitespace-pre-wrap text-xs text-red-700">{errorText}</pre>
+            </div>
+          ) : null}
           {attachments.length > 0 ? (
             useMediaGrid ? (
               <div className={cn("flex w-full flex-col gap-2", isUser && "items-end")}>

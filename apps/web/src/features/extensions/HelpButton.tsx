@@ -51,12 +51,16 @@ const HelpButton = () => {
         <div className="space-y-5 py-2 text-sm">
           {/* 快速开始 */}
           <HelpSection title="快速开始">
-            <p>选择 Agent - 输入消息开始对话</p>
+            <p>选择 Agent → 输入消息开始对话</p>
             <p className="text-[11px] text-muted-foreground/80">点击左上角头像切换不同 Agent</p>
+            <p className="text-[11px] text-muted-foreground/80">左侧会话列表可新建/切换对话</p>
           </HelpSection>
 
           {/* Agent 说明 */}
           <HelpSection title="Agent 介绍">
+            <p className="text-[11px] text-muted-foreground/80">
+              实际以左侧列表为准，以下为常见内置 Agent：
+            </p>
             <div className="space-y-2">
               <div>
                 <p className="font-medium text-foreground">主调度 (main)</p>
@@ -83,34 +87,32 @@ const HelpButton = () => {
                 <p>定时调度：设置周期性任务和心跳</p>
               </div>
             </div>
+            <p className="text-[11px] text-muted-foreground/80">自定义 Agent 会显示在列表中。</p>
           </HelpSection>
 
           {/* 常用命令 */}
           <HelpSection title="常用命令">
             <div className="space-y-2">
               <div>
-                <p className="font-medium text-foreground">切换 Agent</p>
+                <p className="font-medium text-foreground">Agent 路由</p>
                 <p>
-                  <Code>/agent Agent名称</Code> 快速切换
+                  以关键词开头可路由到指定 Agent（示例：<Code>囚牛 帮我找猫图</Code>）
                 </p>
+                <p className="text-[11px] text-muted-foreground/80">实际关键词以 Agent 配置为准</p>
               </div>
               <div>
                 <p className="font-medium text-foreground">图片搜索</p>
                 <p>
-                  <Code>/img 关键词</Code> 搜索图片库
+                  <Code>/img 关键词</Code> 搜索图片库（会路由到囚牛）
                 </p>
-                <p className="text-[11px]">
-                  例：<Code>/img 猫咪</Code>、<Code>/img 风景 --top 5</Code>
-                </p>
+                <p className="text-[11px] text-muted-foreground/80">需要启用 Image Pipeline</p>
               </div>
               <div>
                 <p className="font-medium text-foreground">音频搜索</p>
                 <p>
-                  <Code>/audio 关键词</Code> 搜索录音内容
+                  <Code>/audio 关键词</Code> 搜索录音内容（会路由到囚牛）
                 </p>
-                <p className="text-[11px]">
-                  例：<Code>/audio 会议</Code>、<Code>/audio 预算 --top 3</Code>
-                </p>
+                <p className="text-[11px] text-muted-foreground/80">需要启用 Audio Pipeline</p>
               </div>
             </div>
           </HelpSection>
@@ -129,7 +131,7 @@ const HelpButton = () => {
               </li>
             </ul>
             <p className="text-[11px] text-muted-foreground/80 mt-1">
-              绿色 = 运行中，灰色 = 已停止
+              绿色 = 已启用，灰色 = 已停用（运行状态以 Running 行为准）
             </p>
           </HelpSection>
 
@@ -142,34 +144,24 @@ const HelpButton = () => {
               <p>
                 <Code>Shift+Enter</Code> 换行
               </p>
-              <p>
-                <Code>↑</Code> 编辑上条消息
-              </p>
-              <p>
-                <Code>Ctrl+L</Code> 清屏
-              </p>
             </div>
           </HelpSection>
 
           {/* 参数说明 */}
           <HelpSection title="搜索参数">
             <div className="space-y-1 text-[11px]">
-              <p>
-                <Code>--top N</Code> 返回 N 个结果（默认 5）
-              </p>
-              <p>
-                <Code>--min 0.8</Code> 最低相似度（-1 到 1）
+              <p>/img、/audio 当前只支持关键词搜索</p>
+              <p className="text-muted-foreground/80">
+                --top/--min 语法已预留，但当前版本可能不会影响结果
               </p>
             </div>
-            <p className="text-[11px] text-muted-foreground/80 mt-1">
-              例：<Code>/audio 预算 --top 3 --min 0.7</Code>
-            </p>
           </HelpSection>
 
           {/* 注意事项 */}
           <div className="pt-2 border-t">
             <p className="text-[11px] text-muted-foreground/70">
-              <strong>提示</strong>：搜索前确保 Extension 已开启，且文件已放入监控目录
+              <strong>提示</strong>：搜索前确保 Extension 已开启，囚牛 Agent
+              可用，且文件已放入监控目录
             </p>
           </div>
         </div>
