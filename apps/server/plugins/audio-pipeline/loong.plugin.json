@@ -1,0 +1,25 @@
+{
+  "id": "audio-pipeline",
+  "name": "Audio Pipeline",
+  "description": "Watch and query audio transcription embeddings.",
+  "entry": "./index.ts",
+  "enabledByDefault": true,
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": { "type": "boolean" },
+      "pipelineDir": { "type": "string" },
+      "queryCmd": { "type": "string" },
+      "watchCmd": { "type": "string" },
+      "inputDirs": { "type": "array", "items": { "type": "string" } },
+      "outputDir": { "type": "string" },
+      "watchArgs": { "type": "string" },
+      "autoStart": { "type": "boolean" },
+      "allowRoots": { "type": "array", "items": { "type": "string" } },
+      "maxTop": { "type": "number" },
+      "maxBytes": { "type": "number" },
+      "maxTotalBytes": { "type": "number" }
+    }
+  }
+}

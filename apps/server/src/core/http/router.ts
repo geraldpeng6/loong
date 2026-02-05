@@ -7,6 +7,7 @@ import { createSubagentsRoute } from "./routes/subagents.js";
 import { createAskRoute } from "./routes/ask.js";
 import { createStaticRoute } from "./routes/static.js";
 import { createUploadRoute } from "./routes/upload.js";
+import { createPluginsRoute, type PluginStatus } from "./routes/plugins.js";
 import type { RouteHandler } from "./types.js";
 import type { FileStorageService, FileUploadConfig } from "../files/types.js";
 import type { AttachmentReference } from "../files/types.js";
@@ -74,6 +75,7 @@ export interface CreateHttpRouterOptions {
   fileStorage?: FileStorageService | null;
   fileUploadConfig?: FileUploadConfig | null;
   passwordRequired?: boolean;
+  plugins?: PluginStatus[];
 }
 
 export const createHttpRouter = ({
@@ -105,10 +107,12 @@ export const createHttpRouter = ({
   fileStorage = null,
   fileUploadConfig = null,
   passwordRequired = false,
+  plugins = [],
 }: CreateHttpRouterOptions) => {
   const readRequestBody = (req) => readBody(req, { maxBytes: maxBodyBytes });
 
   const healthRoute = createHealthRoute({ agentList, defaultAgentId });
+  const pluginsRoute = createPluginsRoute({ notifyLocalOnly, plugins });
   const modelsRoute = createModelsRoutes({
     notifyLocalOnly,
     readBody: readRequestBody,
@@ -161,6 +165,7 @@ export const createHttpRouter = ({
 
   const handlers = [
     healthRoute,
+    pluginsRoute,
     modelsRoute,
     notifyRoute,
     subagentsRoute,

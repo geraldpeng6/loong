@@ -14,8 +14,7 @@ import { getBuiltinProviderCatalog } from "./core/models/catalog.js";
 import { createSubagentStore } from "./core/subagents/store.js";
 import { createDirectReplyHandler } from "./core/subagents/direct-reply.js";
 import { resolveUserPath } from "./core/utils/paths.js";
-import { initImgPipelineFeature } from "./features/img-pipeline/index.js";
-import { initAudioPipelineFeature } from "./features/audio-pipeline/index.js";
+import { createPluginManager } from "./core/plugins/manager.js";
 import { createAgentConfigLoader } from "./core/agent/config.js";
 import { createAgentRuntimeFactory } from "./core/agent/runtime.js";
 import { ensureWorkspaceScaffold } from "./core/agent/workspace.js";
@@ -49,6 +48,7 @@ import { DEFAULT_MAX_FILE_SIZE, DEFAULT_ALLOWED_MIME_TYPES } from "./core/files/
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, "..", "..", "..");
+const LOONG_INSTALL_DIR = process.env.LOONG_INSTALL_DIR || PROJECT_ROOT;
 
 const PORT = Number(process.env.PORT || 17800);
 
@@ -68,6 +68,9 @@ const TEMPLATE_AGENTS_DIR = join(PROJECT_ROOT, "templates", "agents");
 const LOONG_STATE_DIR = process.env.LOONG_STATE_DIR || join(homedir(), ".loong");
 const LOONG_WORKSPACES_DIR = join(LOONG_STATE_DIR, "workspaces");
 const LOONG_SESSIONS_DIR = join(LOONG_STATE_DIR, "sessions");
+const LOONG_WORKSPACE_PLUGIN_DIR = join(PI_CWD, ".loong", "plugins");
+const LOONG_GLOBAL_PLUGIN_DIR = join(LOONG_STATE_DIR, "plugins");
+const LOONG_BUNDLED_PLUGIN_DIR = join(LOONG_INSTALL_DIR, "apps", "server", "plugins");
 const LOONG_USERS_DIR = join(LOONG_STATE_DIR, "users");
 const LOONG_RUNTIME_DIR = join(LOONG_STATE_DIR, "runtime");
 const LOONG_RUNTIME_CHANNELS_DIR = join(LOONG_RUNTIME_DIR, "channels");
@@ -98,20 +101,6 @@ const rebootScheduler = createRebootScheduler({
   projectRoot: PROJECT_ROOT,
   logger: console,
   env: process.env,
-});
-
-const imgPipelineFeature = initImgPipelineFeature({
-  resolveUserPath,
-  notifyLocalOnly: NOTIFY_LOCAL_ONLY,
-  maxBodyBytes: MAX_BODY_BYTES,
-  logger: console,
-});
-
-const audioPipelineFeature = initAudioPipelineFeature({
-  resolveUserPath,
-  notifyLocalOnly: NOTIFY_LOCAL_ONLY,
-  maxBodyBytes: MAX_BODY_BYTES,
-  logger: console,
 });
 
 // File upload configuration
@@ -166,6 +155,13 @@ const DEFAULT_GATEWAY_CONFIG = {
   notifyOnStart: true,
   replyPrefixMode: "always",
   keywordMode: "prefix",
+  plugins: {
+    enabled: true,
+    allow: [],
+    deny: [],
+    load: { paths: [] },
+    entries: {},
+  },
 };
 
 checkPiInstalled(PI_CMD, console);
@@ -189,14 +185,37 @@ const ensureDefaultAgents = () => {
 
 ensureDefaultAgents();
 
+const gatewayConfig = loadGatewayConfig({
+  configPath: LOONG_CONFIG_PATH,
+  defaults: DEFAULT_GATEWAY_CONFIG,
+  logger: console,
+});
+
+const pluginManager = await createPluginManager({
+  config: gatewayConfig.plugins,
+  env: process.env,
+  logger: console,
+  resolveUserPath,
+  notifyLocalOnly: NOTIFY_LOCAL_ONLY,
+  maxBodyBytes: MAX_BODY_BYTES,
+  bundledDir: LOONG_BUNDLED_PLUGIN_DIR,
+  globalDir: LOONG_GLOBAL_PLUGIN_DIR,
+  workspaceDir: LOONG_WORKSPACE_PLUGIN_DIR,
+  configBaseDir: dirname(LOONG_CONFIG_PATH),
+});
+
+const pluginSummaries = pluginManager.plugins.map((plugin) => ({
+  id: plugin.id,
+  name: plugin.manifest.name,
+  description: plugin.manifest.description,
+  enabled: plugin.enabled,
+}));
+
 const resolveInternalExtensionPaths = createInternalExtensionsResolver({
   baseDir: __dirname,
   resolveUserPath,
   env: process.env,
-  extraExtensions: [
-    ...(imgPipelineFeature?.extensions ?? []),
-    ...(audioPipelineFeature?.extensions ?? []),
-  ],
+  extraExtensions: pluginManager.agentExtensions,
 });
 
 const agentConfigLoader = createAgentConfigLoader({
@@ -258,11 +277,6 @@ let webChannel = null;
 let imessageChannel = null;
 let sessionFlow = null;
 
-const gatewayConfig = loadGatewayConfig({
-  configPath: LOONG_CONFIG_PATH,
-  defaults: DEFAULT_GATEWAY_CONFIG,
-  logger: console,
-});
 const agents = new Map();
 const agentList = [];
 const defaultAgentId = initAgents({
@@ -332,7 +346,8 @@ const server = createServer(
     getBuiltinProviderCatalog,
     modelsPath: PI_MODELS_PATH,
     restartAgentProcesses: () => restartAgentProcesses({ agents, logger: console }),
-    extraRoutes: [...(imgPipelineFeature?.routes ?? []), ...(audioPipelineFeature?.routes ?? [])],
+    plugins: pluginSummaries,
+    extraRoutes: pluginManager.routes,
     subagentRuns,
     subagentDirectReplies,
     persistSubagentRuns,
@@ -517,16 +532,19 @@ handleAgentEvent = createAgentEventHandler({
   notifyBackgroundWebClients,
 });
 
-const combinedTransformAgentPayload = (agent: unknown, payload: unknown) => {
-  let transformed = payload;
-  if (imgPipelineFeature?.transformAgentPayload) {
-    transformed = imgPipelineFeature.transformAgentPayload(agent, transformed);
-  }
-  if (audioPipelineFeature?.transformAgentPayload) {
-    transformed = audioPipelineFeature.transformAgentPayload(agent, transformed);
-  }
-  return transformed;
-};
+const combinedTransformAgentPayload =
+  pluginManager.agentPayloadTransforms.length > 0
+    ? (agent: unknown, payload: unknown) => {
+        let transformed = payload;
+        for (const transform of pluginManager.agentPayloadTransforms) {
+          const next = transform(agent, transformed);
+          if (next !== undefined) {
+            transformed = next;
+          }
+        }
+        return transformed;
+      }
+    : undefined;
 
 const handleAgentLine = createAgentLineHandler({
   handleAgentResponse,
@@ -639,6 +657,24 @@ if (IMESSAGE_ENABLED) {
       console.error(`[loong] imessage bridge failed: ${err.message}`);
     });
 }
+
+await pluginManager.startAll();
+
+let shuttingDown = false;
+const shutdown = async (signal: string) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[loong] received ${signal}, stopping plugins`);
+  await pluginManager.stopAll();
+  process.exit(0);
+};
+
+process.on("SIGINT", () => {
+  void shutdown("SIGINT");
+});
+process.on("SIGTERM", () => {
+  void shutdown("SIGTERM");
+});
 
 server.listen(PORT, () => {
   const modeLabel = IMESSAGE_ENABLED_ENV ? "explicit" : "auto";

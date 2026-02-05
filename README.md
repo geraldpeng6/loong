@@ -15,6 +15,7 @@ Minimal WebSocket gateway that proxies to `pi --mode rpc`.
 
 - Node.js >= 20
 - `@mariozechner/pi-coding-agent` available (installed locally via `pnpm install`; global install optional)
+- `uv` on PATH for audio pipeline scripts (install: https://astral.sh/uv)
 
 ## Install
 
@@ -86,6 +87,8 @@ export PI_EDIT_ROOT=$HOME/code/loong
 # export IMG_PIPELINE_MAX_TOP=20
 # export IMG_PIPELINE_MAX_BYTES=$((5*1024*1024))
 # export IMG_PIPELINE_MAX_TOTAL_BYTES=$((20*1024*1024))
+# Audio pipeline scripts use `uv run --script`; ensure uv is on PATH
+# (e.g. export PATH="$HOME/.local/bin:$PATH").
 
 # file upload configuration (optional)
 export LOONG_UPLOAD_DIR=$HOME/.loong/uploads
@@ -121,9 +124,34 @@ Gateway config file (default: `~/.loong/config.json`):
   "defaultAgent": "reviewer",
   "notifyOnStart": true,
   "replyPrefixMode": "always",
-  "keywordMode": "prefix"
+  "keywordMode": "prefix",
+  "plugins": {
+    "enabled": true,
+    "load": { "paths": [] },
+    "entries": {
+      "img-pipeline": {
+        "enabled": true,
+        "config": {
+          "inputDirs": ["~/Downloads"],
+          "outputDir": "~/output",
+          "autoStart": false
+        }
+      },
+      "audio-pipeline": {
+        "enabled": true,
+        "config": {
+          "inputDirs": ["~/data/audio"],
+          "outputDir": "~/output/audio-pipeline",
+          "autoStart": false
+        }
+      }
+    }
+  }
 }
 ```
+
+Plugins are discovered from config `plugins.load.paths`, `~/.loong/plugins`, `.loong/plugins` under
+`PI_CWD`, and bundled plugins under `apps/server/plugins/`.
 
 ## Agents (pi subagent format)
 

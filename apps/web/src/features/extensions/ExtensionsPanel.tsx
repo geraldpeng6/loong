@@ -12,10 +12,12 @@ import { Switch } from "@/components/ui/switch";
 import { RefreshCw, Folder, Activity, Plus, Trash2, Save } from "lucide-react";
 import { useImgPipeline } from "@/features/img-pipeline/useImgPipeline";
 import { useAudioPipeline } from "@/features/audio-pipeline/useAudioPipeline";
+import { usePlugins } from "@/features/extensions/usePlugins";
 import HelpButton from "./HelpButton";
 
 const ExtensionsPanel = () => {
   const [open, setOpen] = useState(false);
+  const plugins = usePlugins();
   const imgPipeline = useImgPipeline();
   const audioPipeline = useAudioPipeline();
   const [imgInputDirs, setImgInputDirs] = useState<string[]>([""]);
@@ -41,7 +43,19 @@ const ExtensionsPanel = () => {
     setAudioPipelineDir(audioPipeline.status.pipelineDir || "");
   }, [open, audioPipeline.status]);
 
-  const hasAnyExtension = imgPipeline.status || audioPipeline.status;
+  const imgPlugin = plugins.plugins.find((plugin) => plugin.id === "img-pipeline") || null;
+  const audioPlugin = plugins.plugins.find((plugin) => plugin.id === "audio-pipeline") || null;
+  const hasAnyExtension = plugins.plugins.length > 0;
+  const imgUnavailableMessage = imgPlugin
+    ? imgPlugin.enabled
+      ? imgPipeline.error || "Not available"
+      : "Plugin disabled in config"
+    : plugins.error || "Plugin not installed";
+  const audioUnavailableMessage = audioPlugin
+    ? audioPlugin.enabled
+      ? audioPipeline.error || "Not available"
+      : "Plugin disabled in config"
+    : plugins.error || "Plugin not installed";
 
   const updateImgInputDir = (index: number, value: string) => {
     setImgInputDirs((prev) => prev.map((dir, idx) => (idx === index ? value : dir)));
@@ -120,6 +134,17 @@ const ExtensionsPanel = () => {
                 <div className="flex items-center gap-2">
                   <Folder size={16} className="text-blue-500" />
                   <h3 className="font-medium">Image Pipeline</h3>
+                  {imgPlugin && (
+                    <span
+                      className={`text-xs px-2 py-0.5 rounded ${
+                        imgPlugin.enabled
+                          ? "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300"
+                          : "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400"
+                      }`}
+                    >
+                      {imgPlugin.enabled ? "PLUGIN ON" : "PLUGIN OFF"}
+                    </span>
+                  )}
                   {imgPipeline.status && (
                     <span
                       className={`text-xs px-2 py-0.5 rounded ${
@@ -128,7 +153,7 @@ const ExtensionsPanel = () => {
                           : "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400"
                       }`}
                     >
-                      {imgPipeline.status.enabled ? "ON" : "OFF"}
+                      {imgPipeline.status.enabled ? "WATCHER ON" : "WATCHER OFF"}
                     </span>
                   )}
                 </div>
@@ -237,9 +262,7 @@ const ExtensionsPanel = () => {
                   </div>
                 </div>
               ) : (
-                <p className="text-xs text-muted-foreground pl-6">
-                  {imgPipeline.error || "Not available"}
-                </p>
+                <p className="text-xs text-muted-foreground pl-6">{imgUnavailableMessage}</p>
               )}
             </div>
 
@@ -249,6 +272,17 @@ const ExtensionsPanel = () => {
                 <div className="flex items-center gap-2">
                   <Activity size={16} className="text-purple-500" />
                   <h3 className="font-medium">Audio Pipeline</h3>
+                  {audioPlugin && (
+                    <span
+                      className={`text-xs px-2 py-0.5 rounded ${
+                        audioPlugin.enabled
+                          ? "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300"
+                          : "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400"
+                      }`}
+                    >
+                      {audioPlugin.enabled ? "PLUGIN ON" : "PLUGIN OFF"}
+                    </span>
+                  )}
                   {audioPipeline.status && (
                     <span
                       className={`text-xs px-2 py-0.5 rounded ${
@@ -257,7 +291,7 @@ const ExtensionsPanel = () => {
                           : "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400"
                       }`}
                     >
-                      {audioPipeline.status.enabled ? "ON" : "OFF"}
+                      {audioPipeline.status.enabled ? "WATCHER ON" : "WATCHER OFF"}
                     </span>
                   )}
                 </div>
@@ -366,9 +400,7 @@ const ExtensionsPanel = () => {
                   </div>
                 </div>
               ) : (
-                <p className="text-xs text-muted-foreground pl-6">
-                  {audioPipeline.error || "Not available"}
-                </p>
+                <p className="text-xs text-muted-foreground pl-6">{audioUnavailableMessage}</p>
               )}
             </div>
 
@@ -376,10 +408,12 @@ const ExtensionsPanel = () => {
               <div className="text-center py-4 text-sm text-muted-foreground">
                 No extensions available.
                 <br />
-                Set environment variables to enable:
+                Enable plugins in <code className="px-1 py-0.5">~/.loong/config.json</code>:
                 <br />
                 <code className="text-xs bg-muted px-1 py-0.5 rounded mt-1 inline-block">
-                  IMG_PIPELINE_DIR or AUDIO_PIPELINE_DIR
+                  plugins.entries.img-pipeline.enabled = true
+                  <br />
+                  plugins.entries.audio-pipeline.enabled = true
                 </code>
               </div>
             )}

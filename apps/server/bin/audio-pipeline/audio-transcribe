@@ -1,9 +1,17 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#   "openai-whisper==20250625",
+#   "torch==2.10.0",
+#   "imageio-ffmpeg==0.6.0",
+# ]
+# ///
 """audio-transcribe: 使用 Whisper + ffmpeg 转写音频文件
 Usage: audio-transcribe <audio_file> [--model MODEL] [--language LANG]
 Output: JSON with transcription, segments, and metadata
 
-Requires: ffmpeg, whisper (install in current env or set WHISPER_VENV/WHISPER_SITE_PACKAGES)
+Requires: ffmpeg (auto-downloaded via imageio-ffmpeg when using uv) or a system ffmpeg
 """
 
 import argparse
@@ -15,22 +23,43 @@ import sys
 import time
 from pathlib import Path
 
-# Check ffmpeg first
-if not shutil.which("ffmpeg"):
-    print(
-        json.dumps(
-            {
-                "error": "ffmpeg not found. Please install ffmpeg:",
-                "install": {
-                    "macos": "brew install ffmpeg",
-                    "ubuntu": "sudo apt update && sudo apt install ffmpeg",
-                    "arch": "sudo pacman -S ffmpeg",
-                },
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
-    )
+def ensure_ffmpeg() -> tuple[str | None, str | None]:
+    env_binary = os.environ.get("FFMPEG_BINARY")
+    if env_binary and Path(env_binary).exists():
+        os.environ["PATH"] = f"{Path(env_binary).parent}:{os.environ.get('PATH', '')}"
+        return env_binary, None
+
+    existing = shutil.which("ffmpeg")
+    if existing:
+        return existing, None
+
+    try:
+        import imageio_ffmpeg
+
+        ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
+        if ffmpeg_path and Path(ffmpeg_path).exists():
+            os.environ["FFMPEG_BINARY"] = ffmpeg_path
+            os.environ["PATH"] = f"{Path(ffmpeg_path).parent}:{os.environ.get('PATH', '')}"
+            return ffmpeg_path, None
+    except Exception as err:
+        return None, str(err)
+
+    return None, None
+
+
+ffmpeg_path, ffmpeg_error = ensure_ffmpeg()
+if not ffmpeg_path:
+    error_payload = {
+        "error": "ffmpeg not found. Install ffmpeg or use uv to auto-download it.",
+        "install": {
+            "macos": "brew install ffmpeg",
+            "ubuntu": "sudo apt update && sudo apt install ffmpeg",
+            "arch": "sudo pacman -S ffmpeg",
+        },
+    }
+    if ffmpeg_error:
+        error_payload["detail"] = ffmpeg_error
+    print(json.dumps(error_payload, ensure_ascii=False, indent=2))
     sys.exit(1)
 
 
@@ -75,7 +104,7 @@ def load_whisper_modules():
             json.dumps(
                 {
                     "error": "whisper module not found",
-                    "hint": "Install openai-whisper or set WHISPER_VENV/WHISPER_SITE_PACKAGES",
+                    "hint": "Install uv and run this script, or install openai-whisper+torch in the current env",
                 },
                 ensure_ascii=False,
             )
@@ -84,6 +113,25 @@ def load_whisper_modules():
 
 
 torch, whisper = load_whisper_modules()
+
+
+def resolve_device(requested: str | None) -> str:
+    has_cuda = torch.cuda.is_available()
+    has_mps = bool(getattr(torch.backends, "mps", None)) and torch.backends.mps.is_available()
+
+    if requested:
+        if requested == "cuda" and not has_cuda:
+            raise RuntimeError("CUDA requested but torch.cuda.is_available() is False")
+        if requested == "mps" and not has_mps:
+            raise RuntimeError("MPS requested but torch.backends.mps.is_available() is False")
+        return requested
+
+    if has_cuda:
+        return "cuda"
+    if has_mps:
+        return "mps"
+    return "cpu"
+
 
 SUPPORTED_EXTS = {".mp3", ".wav", ".m4a", ".ogg", ".flac", ".webm", ".mp4"}
 
@@ -105,7 +153,11 @@ def main():
         help="Whisper model name (tiny, base, small, medium, large)",
     )
     parser.add_argument("--language", default="zh", help="Language code (default: zh)")
-    parser.add_argument("--device", choices=["cpu", "cuda"], help="Device override")
+    parser.add_argument(
+        "--device",
+        choices=["cpu", "cuda", "mps"],
+        help="Device override (cpu/cuda/mps)",
+    )
     parser.add_argument("--output-dir", type=Path, help="Output directory for transcription files")
 
     args = parser.parse_args()
@@ -119,7 +171,11 @@ def main():
         print(json.dumps({"error": f"Unsupported format: {audio_path.suffix}"}, ensure_ascii=False))
         sys.exit(1)
 
-    device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
+    try:
+        device = resolve_device(args.device)
+    except RuntimeError as err:
+        print(json.dumps({"error": str(err)}, ensure_ascii=False))
+        sys.exit(1)
 
     try:
         cache_dir = Path(
