@@ -1,8 +1,6 @@
 ---
 name: wugang
 description: 吴刚 - 定时调度与心跳管理，负责周期性触发任务
-provider: kimi-coding
-model: k2p5
 tools: read, write, edit, bash
 thinkingLevel: medium
 skills:

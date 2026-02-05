@@ -1,8 +1,6 @@
 ---
 name: cangjie
 description: 仓颉 - 文档与演示处理专家（PPTX/PDF/DOCX/XLSX）
-provider: kimi-coding
-model: k2p5
 tools: read, write, edit, bash
 thinkingLevel: medium
 skills:

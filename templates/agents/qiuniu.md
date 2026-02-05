@@ -1,8 +1,6 @@
 ---
 name: qiuniu
 description: 囚牛 - 音频与图像检索专家，擅长从媒体库中搜索内容
-provider: kimi-coding
-model: k2p5
 tools: read, write, edit, bash, loong_audio_search, loong_img_search
 thinkingLevel: medium
 keywords: qiuniu, 囚牛, 音频搜索, 图像搜索, 媒体检索, 录音查找, 图片查找
