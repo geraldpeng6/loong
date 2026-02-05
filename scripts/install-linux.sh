@@ -100,6 +100,9 @@ LOONG_CONFIG_PATH=${STATE_DIR}/config.json
 LOONG_WEB_DIST=${WEB_DIST}
 LOONG_NOTIFY_LOCAL_ONLY=1
 LOONG_MAX_BODY_BYTES=262144
+LOONG_INSTALL_DIR=${INSTALL_DIR}
+LOONG_PNPM_PATH=${PNPM_PATH}
+LOONG_ENV_FILE=/etc/loong/env
 
 LOONG_PASSWORD=${PASSWORD}
 
@@ -150,8 +153,17 @@ EOF
 echo "Writing ${SERVICE_PATH}..."
 echo "${SERVICE_CONTENT}" | sudo tee "${SERVICE_PATH}" >/dev/null
 
+CLI_SOURCE="${INSTALL_DIR}/bin/loong"
+CLI_DEST="/usr/local/bin/loong"
+
+sudo mkdir -p "/usr/local/bin"
+if [[ -f "${CLI_SOURCE}" ]]; then
+  sudo install -m 755 "${CLI_SOURCE}" "${CLI_DEST}"
+fi
+
 sudo systemctl daemon-reload
 sudo systemctl enable --now "${SERVICE_NAME}"
 
 echo "Done. Service '${SERVICE_NAME}' is running."
+echo "CLI: loong start|stop|restart|status|logs|serve"
 echo "Open: http://localhost:${PORT}/"

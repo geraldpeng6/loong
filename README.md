@@ -49,6 +49,20 @@ The installer will:
 
 Templates are also available in `docs/deploy/`.
 
+## CLI
+
+After installing, use the `loong` command to manage the service:
+
+```bash
+loong start
+loong stop
+loong restart
+loong status
+loong logs
+loong serve   # foreground
+loong open    # open UI
+```
+
 ## Run
 
 ```bash

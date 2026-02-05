@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+OS="$(uname -s)"
+DEFAULT_INSTALL_DIR="/opt/loong"
+DEFAULT_ENV_LINUX="/etc/loong/env"
+DEFAULT_ENV_MAC="${HOME}/.loong/env"
+
+load_env() {
+  local env_file="$1"
+  if [[ -f "${env_file}" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "${env_file}"
+    set +a
+  fi
+}
+
+ENV_FILE="${LOONG_ENV_FILE:-}"
+if [[ -z "${ENV_FILE}" ]]; then
+  if [[ "${OS}" == "Linux" && -f "${DEFAULT_ENV_LINUX}" ]]; then
+    ENV_FILE="${DEFAULT_ENV_LINUX}"
+  elif [[ -f "${DEFAULT_ENV_MAC}" ]]; then
+    ENV_FILE="${DEFAULT_ENV_MAC}"
+  fi
+fi
+
+if [[ -n "${ENV_FILE}" ]]; then
+  load_env "${ENV_FILE}"
+fi
+
+INSTALL_DIR="${LOONG_INSTALL_DIR:-${PI_CWD:-${DEFAULT_INSTALL_DIR}}}"
+PORT="${PORT:-17800}"
+SYSTEMD_SERVICE="${LOONG_SYSTEMD_SERVICE:-loong}"
+LAUNCHD_LABEL="${LOONG_LAUNCHD_LABEL:-com.loong.server}"
+PNPM_BIN="${LOONG_PNPM_PATH:-${PNPM_PATH:-}}"
+LOG_FILE="${LOONG_LOG_FILE:-${HOME}/Library/Logs/loong.log}"
+ERR_FILE="${LOONG_ERR_FILE:-${HOME}/Library/Logs/loong.err}"
+
+if [[ -z "${PNPM_BIN}" ]]; then
+  PNPM_BIN="$(command -v pnpm || true)"
+fi
+
+print_help() {
+  cat <<EOF
+Usage:
+  loong <command>
+
+Commands:
+  start       Start the Loong service
+  stop        Stop the Loong service
+  restart     Restart the Loong service
+  status      Show service status
+  logs        Tail service logs
+  serve       Run server in the foreground
+  open        Open the web UI
+  help        Show this help
+
+Examples:
+  loong start
+  loong logs
+  loong serve
+EOF
+}
+
+require_pnpm() {
+  if [[ -z "${PNPM_BIN}" ]]; then
+    echo "pnpm not found. Please install pnpm or set LOONG_PNPM_PATH." >&2
+    exit 1
+  fi
+}
+
+command="${1:-help}"
+shift || true
+
+case "${command}" in
+  help|-h|--help)
+    print_help
+    ;;
+  start)
+    if [[ "${OS}" == "Linux" ]]; then
+      sudo systemctl start "${SYSTEMD_SERVICE}"
+    else
+      launchctl kickstart -k "gui/$(id -u)/${LAUNCHD_LABEL}"
+    fi
+    ;;
+  stop)
+    if [[ "${OS}" == "Linux" ]]; then
+      sudo systemctl stop "${SYSTEMD_SERVICE}"
+    else
+      launchctl bootout "gui/$(id -u)/${LAUNCHD_LABEL}"
+    fi
+    ;;
+  restart)
+    if [[ "${OS}" == "Linux" ]]; then
+      sudo systemctl restart "${SYSTEMD_SERVICE}"
+    else
+      launchctl kickstart -k "gui/$(id -u)/${LAUNCHD_LABEL}"
+    fi
+    ;;
+  status)
+    if [[ "${OS}" == "Linux" ]]; then
+      systemctl status "${SYSTEMD_SERVICE}" --no-pager
+    else
+      launchctl print "gui/$(id -u)/${LAUNCHD_LABEL}"
+    fi
+    ;;
+  logs)
+    if [[ "${OS}" == "Linux" ]]; then
+      journalctl -u "${SYSTEMD_SERVICE}" -f --no-pager
+    else
+      echo "stdout: ${LOG_FILE}"
+      echo "stderr: ${ERR_FILE}"
+      tail -f "${LOG_FILE}" "${ERR_FILE}"
+    fi
+    ;;
+  serve|run)
+    require_pnpm
+    exec "${PNPM_BIN}" -C "${INSTALL_DIR}/apps/server" start
+    ;;
+  open)
+    if command -v xdg-open >/dev/null 2>&1; then
+      xdg-open "http://localhost:${PORT}/"
+    else
+      open "http://localhost:${PORT}/"
+    fi
+    ;;
+  *)
+    echo "Unknown command: ${command}" >&2
+    print_help
+    exit 1
+    ;;
+esac
