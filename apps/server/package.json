@@ -9,6 +9,7 @@
     "start": "tsx src/server.ts"
   },
   "dependencies": {
+    "@sinclair/typebox": "0.34.48",
     "@mariozechner/pi-ai": "0.51.2",
     "@mariozechner/pi-coding-agent": "0.51.3",
     "ws": "^8.18.0"

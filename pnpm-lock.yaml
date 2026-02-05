@@ -47,6 +47,9 @@ importers:
       '@mariozechner/pi-coding-agent':
         specifier: 0.51.3
         version: 0.51.3(ws@8.19.0)(zod@3.25.76)
+      '@sinclair/typebox':
+        specifier: 0.34.48
+        version: 0.34.48
       ws:
         specifier: ^8.18.0
         version: 8.19.0
