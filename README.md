@@ -23,6 +23,32 @@ cd $HOME/code/loong
 pnpm install
 ```
 
+## One-click install (systemd/launchd)
+
+Use the interactive installer to set up Loong as a service (runs as the current user) with defaults under `/opt/loong`.
+
+Linux:
+
+```bash
+./scripts/install-linux.sh
+```
+
+macOS:
+
+```bash
+./scripts/install-macos.sh
+```
+
+The installer will:
+
+- copy the repo to `/opt/loong` (if needed)
+- install dependencies + build the web UI
+- generate env config (press Enter to accept defaults)
+- create and enable systemd/launchd service
+- default to no pipeline watch dirs (auto-start off)
+
+Templates are also available in `docs/deploy/`.
+
 ## Run
 
 ```bash

@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.loong.server</string>
+
+    <key>ProgramArguments</key>
+    <array>
+      <string>/opt/homebrew/bin/pnpm</string>
+      <string>-C</string>
+      <string>/opt/loong/apps/server</string>
+      <string>start</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/opt/loong</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>PORT</key>
+      <string>17800</string>
+      <key>PI_CMD</key>
+      <string>/opt/loong/node_modules/.bin/pi</string>
+      <key>PI_CWD</key>
+      <string>/opt/loong</string>
+      <key>PI_EDIT_ROOT</key>
+      <string>/opt/loong</string>
+      <key>LOONG_STATE_DIR</key>
+      <string>/Users/you/.loong</string>
+      <key>LOONG_WEB_DIST</key>
+      <string>/opt/loong/apps/web/dist</string>
+      <key>LOONG_PASSWORD</key>
+      <string></string>
+
+      <key>LOONG_REBOOT_ENABLED</key>
+      <string>1</string>
+      <key>LOONG_REBOOT_DELAY_MS</key>
+      <string>1000</string>
+      <key>LOONG_LAUNCHD_LABEL</key>
+      <string>com.loong.server</string>
+
+      <key>IMG_PIPELINE_AUTO_START</key>
+      <string>0</string>
+      <key>AUDIO_PIPELINE_AUTO_START</key>
+      <string>0</string>
+      <key>IMG_PIPELINE_INPUT_DIRS</key>
+      <string></string>
+      <key>AUDIO_PIPELINE_INPUT_DIRS</key>
+      <string></string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/you/Library/Logs/loong.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/you/Library/Logs/loong.err</string>
+  </dict>
+</plist>

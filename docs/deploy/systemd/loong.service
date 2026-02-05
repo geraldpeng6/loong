@@ -1,0 +1,15 @@
+[Unit]
+Description=Loong server
+After=network.target
+
+[Service]
+Type=simple
+User=<USER>
+WorkingDirectory=/opt/loong
+EnvironmentFile=/etc/loong/env
+ExecStart=<PNPM_PATH> -C /opt/loong/apps/server start
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

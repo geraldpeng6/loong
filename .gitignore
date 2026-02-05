@@ -4,7 +4,10 @@ server.log
 .DS_Store
 .env
 .env.*
+!.env.example
 *.log
 memory/
 workspace/
 output/
+*.pid
+server.pid
