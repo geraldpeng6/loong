@@ -11,7 +11,19 @@ const matchVoiceCommand = (text) => {
   return { type: "new_session", remainder };
 };
 
-export const resolveCommand = (text) => matchVoiceCommand(text);
+export const matchRebootCommand = (text) => {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("/")) return null;
+  if (trimmed.startsWith("//")) return null;
+
+  const match = trimmed.match(/^\/(reboot|restart)\b(.*)$/i);
+  if (!match) return null;
+
+  const remainder = match[2]?.trim() || "";
+  return { type: "reboot", remainder };
+};
+
+export const resolveCommand = (text) => matchRebootCommand(text) || matchVoiceCommand(text);
 
 export const isSlashCommandText = (text) => {
   const trimmed = text.trim();

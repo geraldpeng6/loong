@@ -26,6 +26,7 @@ import { checkPiInstalled } from "./core/bootstrap/pi-check.js";
 import { ensureStateDirs } from "./core/bootstrap/state-dirs.js";
 import { logStartupInfo } from "./core/bootstrap/startup.js";
 import { createInternalExtensionsResolver } from "./core/extensions/internal.js";
+import { createRebootScheduler } from "./core/utils/reboot.js";
 import { loadGatewayConfig } from "./core/config/gateway.js";
 import { resolveCommand, isSlashCommandText } from "./core/gateway/commands.js";
 import { resolveAgentFromText } from "./core/gateway/router.js";
@@ -80,7 +81,7 @@ const LOONG_DEBUG = ["1", "true", "yes"].includes(
   String(process.env.LOONG_DEBUG || "").toLowerCase(),
 );
 const WS_HEARTBEAT_MS = Number(process.env.LOONG_WS_HEARTBEAT_MS || 30000);
-const TASK_TIMEOUT_MS = Number(process.env.LOONG_TASK_TIMEOUT_MS || 10 * 60 * 1000);
+const TASK_TIMEOUT_MS = Number(process.env.LOONG_TASK_TIMEOUT_MS || 60 * 60 * 1000);
 const SLASH_COMMAND_TIMEOUT_MS = Number(process.env.LOONG_SLASH_COMMAND_TIMEOUT_MS || 0);
 const SESSION_CACHE_TTL_MS = Number(process.env.LOONG_SESSION_CACHE_TTL_MS || 3000);
 const AGENT_RESTART_MS = Number(process.env.LOONG_AGENT_RESTART_MS || 3000);
@@ -92,6 +93,12 @@ const MAX_BODY_BYTES = (() => {
 const NOTIFY_LOCAL_ONLY = !["0", "false", "no"].includes(
   String(process.env.LOONG_NOTIFY_LOCAL_ONLY || "true").toLowerCase(),
 );
+
+const rebootScheduler = createRebootScheduler({
+  projectRoot: PROJECT_ROOT,
+  logger: console,
+  env: process.env,
+});
 
 const imgPipelineFeature = initImgPipelineFeature({
   resolveUserPath,
@@ -319,6 +326,7 @@ const server = createServer(
     getWebChannel: () => webChannel,
     formatAgentReply: (agent, text) => formatAgentReply(agent, text),
     enqueueAgentPrompt: (agent, task) => enqueueAgentPrompt(agent, task),
+    scheduleReboot: (params) => rebootScheduler.schedule(params),
     readModelsConfig,
     writeModelsConfig,
     getBuiltinProviderCatalog,
@@ -558,6 +566,7 @@ const { handleGatewayCommand } = createGatewayHandlers({
   relocateSessionFile,
   upsertSessionIndexEntry,
   updateSessionMapping,
+  scheduleReboot: (params) => rebootScheduler.schedule(params),
 });
 
 const gatewayRuntime = createGatewayRuntime({

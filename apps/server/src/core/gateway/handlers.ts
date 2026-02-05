@@ -4,6 +4,7 @@ export const createGatewayHandlers = ({
   relocateSessionFile,
   upsertSessionIndexEntry,
   updateSessionMapping,
+  scheduleReboot,
 }) => {
   const resolveModelSpec = async (agent, token) => {
     if (!token || !token.includes("/")) return null;
@@ -20,8 +21,39 @@ export const createGatewayHandlers = ({
     return { provider, modelId };
   };
 
-  const handleGatewayCommand = async ({ agent, command, respond, sendPrompt, contextKey }) => {
-    if (!command || command.type !== "new_session") return false;
+  const handleRebootCommand = async ({ agent, command, respond, source, requester }) => {
+    if (!scheduleReboot) {
+      await respond("重启功能未配置。");
+      return true;
+    }
+
+    const result = scheduleReboot({
+      reason: command.remainder,
+      source,
+      requester,
+      agentId: agent?.id,
+    });
+
+    await respond(result.message);
+    return true;
+  };
+
+  const handleGatewayCommand = async ({
+    agent,
+    command,
+    respond,
+    sendPrompt,
+    contextKey,
+    source,
+    requester,
+  }) => {
+    if (!command) return false;
+
+    if (command.type === "reboot") {
+      return handleRebootCommand({ agent, command, respond, source, requester });
+    }
+
+    if (command.type !== "new_session") return false;
     const { remainder } = command;
 
     const trimmed = remainder.trim();

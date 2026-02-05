@@ -1,11 +1,13 @@
 import type { RouteHandler } from "../types.js";
 import { sendJson } from "../utils.js";
+import { matchRebootCommand } from "../../gateway/commands.js";
 
 export const createAskRoute = ({
   readBody,
   agents,
   defaultAgentId,
   enqueueAgentPrompt,
+  scheduleReboot,
 }): RouteHandler => {
   return async (req, res, url) => {
     if (url.pathname !== "/api/ask" || req.method !== "POST") return false;
@@ -15,6 +17,23 @@ export const createAskRoute = ({
       const { message, agentId = defaultAgentId, timeoutMs = 60000 } = body;
       if (!message || typeof message !== "string") {
         sendJson(res, 400, { error: "Missing or invalid 'message' field" });
+        return true;
+      }
+
+      const trimmed = message.trim();
+      const rebootCommand = matchRebootCommand(trimmed);
+      if (rebootCommand) {
+        if (!scheduleReboot) {
+          sendJson(res, 400, { success: false, message: "重启功能未配置。" });
+          return true;
+        }
+        const result = scheduleReboot({ reason: rebootCommand.remainder, source: "api" });
+        sendJson(res, result.ok ? 200 : 400, {
+          success: result.ok,
+          message: result.message,
+          scheduledAt: result.scheduledAt,
+          alreadyScheduled: result.alreadyScheduled || false,
+        });
         return true;
       }
 

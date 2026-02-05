@@ -27,6 +27,8 @@ type GatewayRuntime = {
     respond: (text: string) => void;
     sendPrompt: (text: string) => void;
     contextKey: string | null;
+    source?: string;
+    requester?: string;
   }) => Promise<boolean>;
   enqueueAgentPrompt?: (
     agent: AgentRuntime,
@@ -382,6 +384,7 @@ export const createWebChannel = ({
                   attachments: validatedAttachments,
                 }),
               contextKey: null,
+              source: "web",
             })
           : false;
         if (handled) {
@@ -436,6 +439,7 @@ export const createWebChannel = ({
                   text: promptText,
                 }),
               contextKey: null,
+              source: "web",
             })
           : false;
         if (handled) {

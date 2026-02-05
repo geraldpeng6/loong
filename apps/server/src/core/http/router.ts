@@ -48,6 +48,17 @@ export interface CreateHttpRouterOptions {
     agent: AgentRuntime,
     task: { source: string; text: string; ws?: unknown; attachments?: AttachmentReference[] },
   ) => void;
+  scheduleReboot?: (params: {
+    reason?: string;
+    source?: string;
+    requester?: string;
+    agentId?: string;
+  }) => {
+    ok: boolean;
+    message: string;
+    scheduledAt?: string;
+    alreadyScheduled?: boolean;
+  };
   readModelsConfig: () => unknown;
   writeModelsConfig: (config: unknown) => void;
   getBuiltinProviderCatalog: () => unknown;
@@ -78,6 +89,7 @@ export const createHttpRouter = ({
   getWebChannel,
   formatAgentReply,
   enqueueAgentPrompt,
+  scheduleReboot,
   readModelsConfig,
   writeModelsConfig,
   getBuiltinProviderCatalog,
@@ -130,6 +142,7 @@ export const createHttpRouter = ({
     agents,
     defaultAgentId,
     enqueueAgentPrompt,
+    scheduleReboot,
   });
   const staticRoute = createStaticRoute({ resolvePublicFilePath });
 

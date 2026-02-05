@@ -85,6 +85,8 @@ export interface CreateIMessageInboundOptions {
     respond: (replyText: string) => void;
     sendPrompt: (promptText: string) => void;
     contextKey: string;
+    source?: string;
+    requester?: string;
   }) => Promise<boolean>;
   enqueueAgentPrompt?: (agent: AgentRuntime, task: GatewayTask) => void;
   sendText?: (params: { text: string; chatId?: number; sender?: string }) => Promise<void>;
@@ -261,6 +263,8 @@ export const createIMessageInbound = ({
               onStart: () => sendProcessingNotice(agent, { chatId, sender, text: promptText }),
             }),
           contextKey,
+          source: "imessage",
+          requester: sender,
         })
       : false;
     if (handled) return;

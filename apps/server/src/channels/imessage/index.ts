@@ -30,6 +30,8 @@ type GatewayRuntime = {
     respond: (replyText: string) => void;
     sendPrompt: (promptText: string) => void;
     contextKey: string;
+    source?: string;
+    requester?: string;
   }) => Promise<boolean>;
   enqueueAgentPrompt?: (
     agent: AgentRuntime,
