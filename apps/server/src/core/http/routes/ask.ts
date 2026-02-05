@@ -14,9 +14,27 @@ export const createAskRoute = ({
 
     try {
       const body = await readBody(req);
-      const { message, agentId = defaultAgentId, timeoutMs = 60000 } = body;
+      const {
+        message,
+        agentId = defaultAgentId,
+        timeoutMs = 60000,
+        forceNewSession = false,
+        waitIfBusy = true,
+      } = body;
       if (!message || typeof message !== "string") {
         sendJson(res, 400, { error: "Missing or invalid 'message' field" });
+        return true;
+      }
+      if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+        sendJson(res, 400, { error: "Invalid 'timeoutMs' field" });
+        return true;
+      }
+      if (typeof forceNewSession !== "boolean") {
+        sendJson(res, 400, { error: "Invalid 'forceNewSession' field" });
+        return true;
+      }
+      if (typeof waitIfBusy !== "boolean") {
+        sendJson(res, 400, { error: "Invalid 'waitIfBusy' field" });
         return true;
       }
 
@@ -43,12 +61,14 @@ export const createAskRoute = ({
         return true;
       }
 
-      if (agent.busy) {
+      if (agent.busy && !waitIfBusy) {
         sendJson(res, 503, { error: "Agent is busy, try again later", busy: true });
         return true;
       }
 
-      console.log(`[loong] /api/ask processing: ${message.substring(0, 50)}...`);
+      console.log(
+        `[loong] /api/ask processing (${agent.id}, newSession=${forceNewSession}): ${message.substring(0, 50)}...`,
+      );
 
       const replyPromise = new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
@@ -58,6 +78,7 @@ export const createAskRoute = ({
         enqueueAgentPrompt(agent, {
           source: "api",
           text: message,
+          forceNewSession,
           onReply: (reply) => {
             clearTimeout(timeout);
             resolve(reply);

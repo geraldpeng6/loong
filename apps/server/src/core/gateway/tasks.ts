@@ -29,6 +29,7 @@ export interface Task {
   id?: string;
   source: "web" | "imessage" | "api" | "subagent";
   text: string;
+  forceNewSession?: boolean;
   ws?: unknown;
   sender?: string;
   chatId?: number;

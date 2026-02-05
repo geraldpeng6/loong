@@ -47,7 +47,13 @@ export interface CreateHttpRouterOptions {
   formatAgentReply: (agent: AgentRuntime, text: string) => string;
   enqueueAgentPrompt: (
     agent: AgentRuntime,
-    task: { source: string; text: string; ws?: unknown; attachments?: AttachmentReference[] },
+    task: {
+      source: string;
+      text: string;
+      ws?: unknown;
+      attachments?: AttachmentReference[];
+      forceNewSession?: boolean;
+    },
   ) => void;
   scheduleReboot?: (params: {
     reason?: string;
