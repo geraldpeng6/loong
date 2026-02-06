@@ -109,9 +109,14 @@ pnpm format:check
 
 ## Authentication (optional)
 
-If `LOONG_PASSWORD` is set, all HTTP + WebSocket endpoints require a password.
+Loong supports two password modes:
 
-- Browser: the Web UI will show a Basic Auth prompt. Use any username and the password from `LOONG_PASSWORD`.
+1. **Environment-managed**: set `LOONG_PASSWORD`.
+2. **Web setup managed**: leave `LOONG_PASSWORD` empty and initialize password in Web UI.
+
+When password protection is enabled, API + WebSocket endpoints require auth.
+
+- Browser: the Web UI shows an in-app login/setup screen (no browser Basic Auth popup).
 - API/WS clients: send `Authorization: Bearer <password>` (or Basic auth).
 - WS clients without custom headers: append `?password=...` to the WebSocket URL.
 

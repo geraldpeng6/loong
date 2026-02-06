@@ -83,7 +83,6 @@ const sendToClient = (
 export interface CreateWebChannelOptions {
   server: Server;
   path?: string;
-  passwordRequired?: boolean;
   isAuthorizedRequest?: (req: IncomingMessage) => boolean;
   wsHeartbeatMs?: number;
   agentList?: AgentRuntime[];
@@ -100,7 +99,6 @@ export interface CreateWebChannelOptions {
 export const createWebChannel = ({
   server,
   path = "/ws",
-  passwordRequired = false,
   isAuthorizedRequest,
   wsHeartbeatMs = 30000,
   agentList = [],
@@ -185,7 +183,7 @@ export const createWebChannel = ({
   const wss = new WebSocketServer({ server, path });
 
   wss.on("connection", (ws, req) => {
-    if (passwordRequired && (!req || !isAuthorizedRequest?.(req))) {
+    if (isAuthorizedRequest && (!req || !isAuthorizedRequest(req))) {
       ws.close(1008, "Unauthorized");
       return;
     }
@@ -207,6 +205,11 @@ export const createWebChannel = ({
     });
 
     ws.on("message", async (data) => {
+      if (isAuthorizedRequest && !isAuthorizedRequest(req)) {
+        ws.close(1008, "Unauthorized");
+        return;
+      }
+
       let payload;
       try {
         payload = JSON.parse(data.toString());

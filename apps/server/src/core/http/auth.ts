@@ -9,7 +9,7 @@ export const parseRequestUrl = (req: IncomingMessage): URL | null => {
   }
 };
 
-const getRequestPassword = (req: IncomingMessage, parsedUrl?: URL | null): string => {
+export const extractRequestPassword = (req: IncomingMessage, parsedUrl?: URL | null): string => {
   const authHeader = req.headers.authorization;
   if (typeof authHeader === "string" && authHeader.trim()) {
     const trimmed = authHeader.trim();
@@ -26,10 +26,12 @@ const getRequestPassword = (req: IncomingMessage, parsedUrl?: URL | null): strin
       }
     }
   }
+
   const headerPassword = req.headers["x-loong-password"];
   if (typeof headerPassword === "string" && headerPassword.trim()) {
     return headerPassword.trim();
   }
+
   const url = parsedUrl || parseRequestUrl(req);
   const queryPassword = url?.searchParams?.get("password");
   if (queryPassword) return queryPassword;
@@ -39,22 +41,37 @@ const getRequestPassword = (req: IncomingMessage, parsedUrl?: URL | null): strin
 export const createRequestAuthorizer = ({
   passwordRequired,
   password,
+  isPasswordRequired,
+  verifyPassword,
+  isInternalRequest,
 }: {
-  passwordRequired: boolean;
-  password: string;
+  passwordRequired?: boolean;
+  password?: string;
+  isPasswordRequired?: () => boolean;
+  verifyPassword?: (candidate: string) => boolean;
+  isInternalRequest?: (req: IncomingMessage) => boolean;
 }) => {
+  const requiredByConfig = Boolean(passwordRequired);
+  const verifyByString = (candidate: string) => candidate === (password || "");
+
   const isAuthorizedRequest = (req: IncomingMessage, parsedUrl?: URL | null): boolean => {
-    if (!passwordRequired) return true;
-    return getRequestPassword(req, parsedUrl) === password;
+    if (isInternalRequest?.(req)) return true;
+    const required = isPasswordRequired ? isPasswordRequired() : requiredByConfig;
+    if (!required) return true;
+    const candidate = extractRequestPassword(req, parsedUrl);
+    if (!candidate) return false;
+    if (verifyPassword) return verifyPassword(candidate);
+    return verifyByString(candidate);
   };
 
-  return { isAuthorizedRequest };
+  const getPasswordRequired = () => {
+    return isPasswordRequired ? isPasswordRequired() : requiredByConfig;
+  };
+
+  return { isAuthorizedRequest, getPasswordRequired };
 };
 
 export const sendUnauthorized = (res: ServerResponse) => {
-  res.writeHead(401, {
-    "content-type": "text/plain",
-    "www-authenticate": 'Basic realm="loong"',
-  });
-  res.end("Unauthorized");
+  res.writeHead(401, { "content-type": "application/json" });
+  res.end(JSON.stringify({ error: "Unauthorized" }));
 };

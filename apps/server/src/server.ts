@@ -7,6 +7,7 @@ import { homedir } from "os";
 import { createWebChannel } from "./channels/web/index.js";
 import { createIMessageChannel } from "./channels/imessage/index.js";
 import { createRequestAuthorizer, parseRequestUrl, sendUnauthorized } from "./core/http/auth.js";
+import { createPasswordStore } from "./core/auth/password-store.js";
 import { createPublicFileResolver } from "./core/http/static.js";
 import { createHttpRouter } from "./core/http/router.js";
 import { createModelsConfigStore } from "./core/models/config.js";
@@ -72,6 +73,7 @@ const LOONG_WORKSPACE_PLUGIN_DIR = join(PI_CWD, ".loong", "plugins");
 const LOONG_GLOBAL_PLUGIN_DIR = join(LOONG_STATE_DIR, "plugins");
 const LOONG_BUNDLED_PLUGIN_DIR = join(LOONG_INSTALL_DIR, "apps", "server", "plugins");
 const LOONG_USERS_DIR = join(LOONG_STATE_DIR, "users");
+const LOONG_AUTH_FILE = join(LOONG_USERS_DIR, "auth.json");
 const LOONG_RUNTIME_DIR = join(LOONG_STATE_DIR, "runtime");
 const LOONG_RUNTIME_CHANNELS_DIR = join(LOONG_RUNTIME_DIR, "channels");
 const LOONG_RUNTIME_OUTBOUND_DIR = join(LOONG_RUNTIME_DIR, "outbound");
@@ -79,7 +81,8 @@ const LOONG_RUNTIME_SUBAGENTS_DIR = join(LOONG_RUNTIME_DIR, "subagents");
 const LOONG_CONFIG_PATH = process.env.LOONG_CONFIG_PATH || join(LOONG_STATE_DIR, "config.json");
 const PI_MODELS_PATH = process.env.PI_MODELS_PATH || join(homedir(), ".pi", "agent", "models.json");
 const LOONG_PASSWORD = process.env.LOONG_PASSWORD || "";
-const PASSWORD_REQUIRED = Boolean(LOONG_PASSWORD);
+const INTERNAL_AUTH_TOKEN = process.env.LOONG_INTERNAL_TOKEN || randomUUID();
+process.env.LOONG_INTERNAL_TOKEN = INTERNAL_AUTH_TOKEN;
 const LOONG_DEBUG = ["1", "true", "yes"].includes(
   String(process.env.LOONG_DEBUG || "").toLowerCase(),
 );
@@ -300,9 +303,15 @@ if (!existsSync(publicDir)) {
   console.warn(`[loong] web dist not found: ${publicDir}`);
 }
 
-const { isAuthorizedRequest } = createRequestAuthorizer({
-  passwordRequired: PASSWORD_REQUIRED,
-  password: LOONG_PASSWORD,
+const passwordStore = createPasswordStore({
+  authFile: LOONG_AUTH_FILE,
+  envPassword: LOONG_PASSWORD,
+  logger: console,
+});
+const { isAuthorizedRequest, getPasswordRequired } = createRequestAuthorizer({
+  isPasswordRequired: () => passwordStore.getSnapshot().required,
+  verifyPassword: (candidate) => passwordStore.verifyPassword(candidate),
+  isInternalRequest: (req) => req.headers["x-loong-internal-token"] === INTERNAL_AUTH_TOKEN,
 });
 const resolvePublicFilePath = createPublicFileResolver(publicDir);
 const modelsConfigStore = createModelsConfigStore({
@@ -346,6 +355,10 @@ const server = createServer(
     getBuiltinProviderCatalog,
     modelsPath: PI_MODELS_PATH,
     restartAgentProcesses: () => restartAgentProcesses({ agents, logger: console }),
+    getPasswordSnapshot: () => passwordStore.getSnapshot(),
+    registerPassword: (payload) => passwordStore.register(payload),
+    updatePassword: (payload) => passwordStore.updatePassword(payload),
+    isPasswordRequired: () => getPasswordRequired(),
     plugins: pluginSummaries,
     extraRoutes: pluginManager.routes,
     subagentRuns,
@@ -356,7 +369,6 @@ const server = createServer(
     loongSubagentMaxDepth: LOONG_SUBAGENT_MAX_DEPTH,
     fileStorage,
     fileUploadConfig,
-    passwordRequired: PASSWORD_REQUIRED,
   }),
 );
 
@@ -626,7 +638,6 @@ imessageChannel = createIMessageChannel({
 webChannel = createWebChannel({
   server,
   path: "/ws",
-  passwordRequired: PASSWORD_REQUIRED,
   isAuthorizedRequest,
   wsHeartbeatMs: WS_HEARTBEAT_MS,
   agentList,

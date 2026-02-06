@@ -14,6 +14,8 @@ export interface CreateUploadRouteOptions {
   localOnly?: boolean;
   /** 是否检查授权 */
   passwordRequired?: boolean;
+  /** 动态密码检查 */
+  isPasswordRequired?: () => boolean;
   /** 授权验证函数 */
   isAuthorizedRequest?: (req: IncomingMessage) => boolean;
 }
@@ -154,6 +156,7 @@ export const createUploadRoute = ({
   config,
   localOnly = false,
   passwordRequired = false,
+  isPasswordRequired,
   isAuthorizedRequest,
 }: CreateUploadRouteOptions): RouteHandler => {
   return async (req, res, url) => {
@@ -174,7 +177,8 @@ export const createUploadRoute = ({
     }
 
     // 检查授权
-    if (passwordRequired && isAuthorizedRequest && !isAuthorizedRequest(req)) {
+    const required = isPasswordRequired ? isPasswordRequired() : passwordRequired;
+    if (required && isAuthorizedRequest && !isAuthorizedRequest(req)) {
       sendJson(res, 401, { error: "Unauthorized" });
       return true;
     }

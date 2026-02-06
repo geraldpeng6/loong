@@ -8,9 +8,11 @@ import { createAskRoute } from "./routes/ask.js";
 import { createStaticRoute } from "./routes/static.js";
 import { createUploadRoute } from "./routes/upload.js";
 import { createPluginsRoute, type PluginStatus } from "./routes/plugins.js";
+import { createSetupRoute } from "./routes/setup.js";
 import type { RouteHandler } from "./types.js";
 import type { FileStorageService, FileUploadConfig } from "../files/types.js";
 import type { AttachmentReference } from "../files/types.js";
+import type { PasswordSnapshot } from "../auth/password-store.js";
 
 type AgentSummary = {
   id: string;
@@ -32,6 +34,10 @@ type WebChannel = {
     text: string;
   }) => number;
 };
+
+type PasswordResult =
+  | { ok: true; snapshot: PasswordSnapshot }
+  | { ok: false; status: number; error: string };
 
 export interface CreateHttpRouterOptions {
   parseRequestUrl: (req: IncomingMessage) => URL | null;
@@ -67,10 +73,18 @@ export interface CreateHttpRouterOptions {
     alreadyScheduled?: boolean;
   };
   readModelsConfig: () => unknown;
-  writeModelsConfig: (config: unknown) => void;
+  writeModelsConfig: (config: unknown) => { ok: boolean; error?: string };
   getBuiltinProviderCatalog: () => unknown;
   modelsPath: string;
   restartAgentProcesses: () => void;
+  getPasswordSnapshot: () => PasswordSnapshot;
+  registerPassword: (payload: { username: string; password: string }) => PasswordResult;
+  updatePassword: (payload: {
+    currentPassword?: string;
+    nextPassword: string;
+    username?: string;
+  }) => PasswordResult;
+  isPasswordRequired?: () => boolean;
   extraRoutes?: RouteHandler[];
   subagentRuns: Map<string, unknown>;
   subagentDirectReplies: Map<string, unknown>;
@@ -80,7 +94,6 @@ export interface CreateHttpRouterOptions {
   loongSubagentMaxDepth: number;
   fileStorage?: FileStorageService | null;
   fileUploadConfig?: FileUploadConfig | null;
-  passwordRequired?: boolean;
   plugins?: PluginStatus[];
 }
 
@@ -103,6 +116,10 @@ export const createHttpRouter = ({
   getBuiltinProviderCatalog,
   modelsPath,
   restartAgentProcesses,
+  getPasswordSnapshot,
+  registerPassword,
+  updatePassword,
+  isPasswordRequired,
   extraRoutes = [],
   subagentRuns,
   subagentDirectReplies,
@@ -112,7 +129,6 @@ export const createHttpRouter = ({
   loongSubagentMaxDepth,
   fileStorage = null,
   fileUploadConfig = null,
-  passwordRequired = false,
   plugins = [],
 }: CreateHttpRouterOptions) => {
   const readRequestBody = (req) => readBody(req, { maxBytes: maxBodyBytes });
@@ -127,6 +143,16 @@ export const createHttpRouter = ({
     getBuiltinProviderCatalog,
     modelsPath,
     restartAgentProcesses,
+  });
+  const setupRoute = createSetupRoute({
+    notifyLocalOnly,
+    readBody: readRequestBody,
+    isAuthorizedRequest,
+    getPasswordSnapshot,
+    registerPassword,
+    updatePassword,
+    readModelsConfig,
+    getBuiltinProviderCatalog,
   });
   const notifyRoute = createNotifyRoute({
     notifyLocalOnly,
@@ -163,7 +189,7 @@ export const createHttpRouter = ({
           fileStorage,
           config: fileUploadConfig,
           localOnly: notifyLocalOnly,
-          passwordRequired,
+          isPasswordRequired,
           isAuthorizedRequest: (req) =>
             isAuthorizedRequest(req, new URL(req.url || "", `http://${req.headers.host}`)),
         })
@@ -171,6 +197,7 @@ export const createHttpRouter = ({
 
   const handlers = [
     healthRoute,
+    setupRoute,
     pluginsRoute,
     modelsRoute,
     notifyRoute,
@@ -181,6 +208,10 @@ export const createHttpRouter = ({
     staticRoute,
   ].filter(Boolean);
 
+  const isSetupApi = (pathname: string) => pathname.startsWith("/api/setup/");
+  const isProtectedApi = (pathname: string) =>
+    pathname.startsWith("/api/") && !isSetupApi(pathname);
+
   return async (req, res) => {
     try {
       const url = parseRequestUrl(req);
@@ -190,7 +221,7 @@ export const createHttpRouter = ({
         return;
       }
 
-      if (!isAuthorizedRequest(req, url)) {
+      if (isProtectedApi(url.pathname) && !isAuthorizedRequest(req, url)) {
         sendUnauthorized(res);
         return;
       }

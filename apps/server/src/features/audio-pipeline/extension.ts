@@ -133,7 +133,9 @@ export default function registerAudioSearch(pi: ExtensionAPI) {
       const url = `http://localhost:${port}/api/audio-pipeline/query`;
       const headers: Record<string, string> = { "content-type": "application/json" };
       const auth = resolveBasicAuth(password);
+      const internalToken = process.env.LOONG_INTERNAL_TOKEN || "";
       if (auth) headers.authorization = auth;
+      if (internalToken) headers["x-loong-internal-token"] = internalToken;
 
       const payload = {
         query,
