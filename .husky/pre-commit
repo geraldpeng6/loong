@@ -1,4 +1,9 @@
 #!/bin/sh
-. "$(dirname "$0")/_/husky.sh"
+set -e
 
 pnpm lint-staged
+
+if git diff --cached --name-only --diff-filter=ACMR | grep -q '^apps/web/'; then
+  pnpm --filter loong-web exec tsc --noEmit
+  pnpm --filter loong-web build
+fi
