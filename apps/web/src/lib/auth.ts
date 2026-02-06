@@ -1,16 +1,32 @@
 const STORAGE_KEY = "loong_password";
 
+export const setLoongPassword = (password: string) => {
+  if (typeof window === "undefined") return;
+  try {
+    const trimmed = String(password || "").trim();
+    if (!trimmed) return;
+    window.localStorage.setItem(STORAGE_KEY, trimmed);
+  } catch {
+    // ignore storage errors
+  }
+};
+
+export const clearLoongPassword = () => {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // ignore storage errors
+  }
+};
+
 export const getLoongPassword = (): string => {
   if (typeof window === "undefined") return "";
   const url = new URL(window.location.href);
   const queryPassword = url.searchParams.get("password");
   if (queryPassword && queryPassword.trim()) {
     const trimmed = queryPassword.trim();
-    try {
-      window.localStorage.setItem(STORAGE_KEY, trimmed);
-    } catch {
-      // ignore storage errors
-    }
+    setLoongPassword(trimmed);
     url.searchParams.delete("password");
     const nextSearch = url.searchParams.toString();
     const nextUrl = `${url.pathname}${nextSearch ? `?${nextSearch}` : ""}${url.hash}`;

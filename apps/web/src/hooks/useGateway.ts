@@ -72,6 +72,7 @@ export const useGateway = () => {
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const shouldReconnectRef = useRef(true);
+  const authBlockedRef = useRef(false);
   const connectionIdRef = useRef(0);
   const requestIdRef = useRef(0);
   const pendingRequestsRef = useRef(new Map<string, string>());
@@ -224,7 +225,7 @@ export const useGateway = () => {
   );
 
   const connect = useCallback(() => {
-    if (!shouldReconnectRef.current) return;
+    if (!shouldReconnectRef.current || authBlockedRef.current) return;
 
     if (reconnectTimeoutRef.current) {
       window.clearTimeout(reconnectTimeoutRef.current);
@@ -243,6 +244,7 @@ export const useGateway = () => {
     ws.addEventListener("open", () => {
       if (!shouldReconnectRef.current || connectionId !== connectionIdRef.current) return;
       reconnectAttemptsRef.current = 0;
+      authBlockedRef.current = false;
       setState((prev) => ({ ...prev, status: "connected" }));
       sendRequest("get_state");
       sendRequest("get_messages");
@@ -250,9 +252,13 @@ export const useGateway = () => {
       sendRequest("list_sessions");
     });
 
-    ws.addEventListener("close", () => {
+    ws.addEventListener("close", (event) => {
       if (!shouldReconnectRef.current || connectionId !== connectionIdRef.current) return;
       setState((prev) => ({ ...prev, status: "disconnected" }));
+      if (event.code === 1008) {
+        authBlockedRef.current = true;
+        return;
+      }
       const attempt = reconnectAttemptsRef.current + 1;
       reconnectAttemptsRef.current = attempt;
       const delay = Math.min(1000 * 2 ** (attempt - 1), 8000);
@@ -548,6 +554,7 @@ export const useGateway = () => {
       reconnectTimeoutRef.current = null;
     }
     reconnectAttemptsRef.current = 0;
+    authBlockedRef.current = false;
     connect();
   }, [connect]);
 

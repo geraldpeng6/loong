@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type TouchEvent } from "react";
 import Header from "@/components/layout/Header";
 import Sidebar from "@/components/sidebar/Sidebar";
 import ExtensionsPanel from "@/features/extensions/ExtensionsPanel";
+import SetupGate from "@/features/setup/SetupGate";
 import MessageList from "@/components/chat/MessageList";
 import Composer from "@/components/chat/Composer";
 import ModelSelector from "@/components/model/ModelSelector";
@@ -13,6 +14,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { useGateway } from "@/hooks/useGateway";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useModelRegistry } from "@/hooks/useModelRegistry";
+import { useSetup } from "@/hooks/useSetup";
 import type { SessionEntry } from "@/types/gateway";
 import { cn } from "@/lib/utils";
 
@@ -31,12 +33,19 @@ const App = () => {
     setDraft,
     refreshModels,
     abortCurrent,
+    reconnect,
   } = useGateway();
   const {
     state: modelRegistry,
     refresh: refreshModelRegistry,
     upsertProvider,
   } = useModelRegistry();
+  const {
+    state: setupState,
+    refresh: refreshSetup,
+    login: loginSetup,
+    register: registerSetup,
+  } = useSetup();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     return localStorage.getItem("loong.sidebarCollapsed") === "true";
   });
@@ -49,6 +58,10 @@ const App = () => {
   });
   const isMobile = useMediaQuery("(max-width: 768px)");
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [skipProviderSetup, setSkipProviderSetup] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem("loong.skipProviderSetup") === "true";
+  });
   const swipeRef = useRef({
     active: false,
     startX: 0,
@@ -147,6 +160,16 @@ const App = () => {
     setTheme((prev) => (prev === "dark" ? "light" : "dark"));
   };
 
+  const handleSkipProviderSetup = () => {
+    setSkipProviderSetup(true);
+    window.localStorage.setItem("loong.skipProviderSetup", "true");
+  };
+
+  const clearSkipProviderSetup = () => {
+    setSkipProviderSetup(false);
+    window.localStorage.removeItem("loong.skipProviderSetup");
+  };
+
   const overlayClassName = cn(
     "fixed inset-0 z-40 bg-black/40 transition-opacity",
     mobileSidebarOpen ? "opacity-100" : "pointer-events-none opacity-0",
@@ -159,6 +182,46 @@ const App = () => {
     "absolute top-1/2 z-30 -translate-y-1/2",
     sidebarCollapsed ? "left-0" : "left-64",
   );
+
+  const refreshModelViews = () => {
+    refreshModels();
+    refreshModelRegistry();
+  };
+
+  const setupStatus = setupState.status;
+  const setupPending = !setupStatus;
+  const setupLocked = Boolean(setupStatus?.auth.required && !setupStatus.auth.authorized);
+  const setupRegister = Boolean(setupStatus?.auth.canRegister);
+  const setupProvider = Boolean(
+    setupStatus?.auth.authorized &&
+      !setupStatus?.models.hasConfiguredProvider &&
+      !skipProviderSetup,
+  );
+  const showSetupGate = setupPending || setupLocked || setupRegister || setupProvider;
+
+  if (showSetupGate) {
+    return (
+      <TooltipProvider>
+        <SetupGate
+          loading={setupState.loading}
+          error={setupState.error}
+          status={setupStatus}
+          catalog={modelRegistry.catalog}
+          onRefresh={refreshSetup}
+          onLogin={loginSetup}
+          onRegister={registerSetup}
+          onSaveProvider={async (providerId, provider) => {
+            await upsertProvider(providerId, provider);
+            clearSkipProviderSetup();
+          }}
+          onRefreshModels={refreshModelViews}
+          onReconnect={reconnect}
+          onSetModel={setModel}
+          onSkipProvider={handleSkipProviderSetup}
+        />
+      </TooltipProvider>
+    );
+  }
 
   return (
     <TooltipProvider>
