@@ -53,9 +53,18 @@ export const createImgPipelineRoutes = ({
     return normalizedRoots.some((root) => candidate.startsWith(root) || resolved.startsWith(root));
   };
 
+  const safeDecode = (value: string) => {
+    try {
+      return decodeURIComponent(value);
+    } catch {
+      return null;
+    }
+  };
+
   const resolvePipelinePath = (rawPath: string | null) => {
     if (!rawPath) return null;
-    const decoded = decodeURIComponent(rawPath);
+    const decoded = safeDecode(rawPath);
+    if (!decoded) return null;
     const resolved = resolveUserPath(decoded, homedir());
     if (!resolved || !isAllowedPath(resolved)) return null;
     return resolved;

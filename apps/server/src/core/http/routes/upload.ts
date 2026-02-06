@@ -247,6 +247,14 @@ export const createUploadRoute = ({
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error(`[upload] Upload failed:`, message);
+        if (message === "Request body too large") {
+          sendJson(res, 413, { error: message });
+          return true;
+        }
+        if (message === "Missing boundary in Content-Type") {
+          sendJson(res, 400, { error: message });
+          return true;
+        }
         sendJson(res, 500, { error: "Upload failed", details: message });
         return true;
       }

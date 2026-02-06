@@ -78,6 +78,7 @@ const registerAudioPipeline = async (api: PluginApi) => {
     api.registerService({
       id: "audio-pipeline",
       start: () => {
+        if (!feature.startOnBootstrap) return;
         feature.manager?.start();
       },
       stop: () => {

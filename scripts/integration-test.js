@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawn, execSync } from "child_process";
 import { createInterface } from "readline";
-import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "fs";
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import assert from "assert/strict";
@@ -53,22 +53,54 @@ const TEMP_ROOT = mkdtempSync(join(tmpdir(), "loong-it-"));
 const HOME_DIR = join(TEMP_ROOT, "home");
 const STATE_DIR = join(TEMP_ROOT, "state");
 const AGENTS_DIR = join(HOME_DIR, ".pi", "agent", "agents");
+const BIN_DIR = join(TEMP_ROOT, "bin");
+const IMG_INPUT_DIR = join(TEMP_ROOT, "img-input");
+const IMG_OUTPUT_DIR = join(TEMP_ROOT, "img-output");
 const PORT = Number(process.env.PORT) || (await getFreePort());
 const PASSWORD = "testpass";
+const IS_WINDOWS = process.platform === "win32";
 
 mkdirSync(STATE_DIR, { recursive: true });
 mkdirSync(AGENTS_DIR, { recursive: true });
+mkdirSync(IMG_INPUT_DIR, { recursive: true });
+mkdirSync(IMG_OUTPUT_DIR, { recursive: true });
 
-writeFileSync(
-  join(STATE_DIR, "config.json"),
-  JSON.stringify(
-    {
-      defaultAgent: "jarvis",
+let fakeImgWatchCmd = "";
+let fakeImgQueryCmd = "";
+
+if (!IS_WINDOWS) {
+  mkdirSync(BIN_DIR, { recursive: true });
+  fakeImgWatchCmd = join(BIN_DIR, "fake-watch-img");
+  fakeImgQueryCmd = join(BIN_DIR, "fake-query-img");
+  writeFileSync(fakeImgWatchCmd, ["#!/usr/bin/env bash", "sleep 60"].join("\n"));
+  writeFileSync(fakeImgQueryCmd, ["#!/usr/bin/env bash", "echo '[]'"].join("\n"));
+  chmodSync(fakeImgWatchCmd, 0o755);
+  chmodSync(fakeImgQueryCmd, 0o755);
+}
+
+const gatewayConfig = {
+  defaultAgent: "jarvis",
+};
+
+if (!IS_WINDOWS) {
+  gatewayConfig.plugins = {
+    enabled: true,
+    entries: {
+      "img-pipeline": {
+        enabled: true,
+        config: {
+          inputDirs: [IMG_INPUT_DIR],
+          outputDir: IMG_OUTPUT_DIR,
+          watchCmd: fakeImgWatchCmd,
+          queryCmd: fakeImgQueryCmd,
+          autoStart: false,
+        },
+      },
     },
-    null,
-    2,
-  ),
-);
+  };
+}
+
+writeFileSync(join(STATE_DIR, "config.json"), JSON.stringify(gatewayConfig, null, 2));
 
 writeFileSync(
   join(AGENTS_DIR, "jarvis.md"),
@@ -208,10 +240,39 @@ try {
   const healthPayload = await healthAuth.json();
   assert.equal(healthPayload.ok, true);
 
+  if (!IS_WINDOWS) {
+    const pipelineStatusResp = await fetch(`http://localhost:${PORT}/api/pipeline/status`, {
+      headers: authHeaders,
+    });
+    assert.equal(pipelineStatusResp.status, 200);
+    const pipelineStatus = await pipelineStatusResp.json();
+    assert.equal(pipelineStatus.success, true);
+    assert.equal(pipelineStatus.enabled, false);
+    assert.equal(pipelineStatus.running, false);
+  }
+
   const traversalResp = await fetch(`http://localhost:${PORT}/%2e%2e/package.json`, {
     headers: authHeaders,
   });
   assert.equal(traversalResp.status, 404);
+
+  if (!IS_WINDOWS) {
+    const uploadBoundaryResp = await fetch(`http://localhost:${PORT}/api/upload`, {
+      method: "POST",
+      headers: { ...authHeaders, "content-type": "multipart/form-data" },
+      body: "x",
+    });
+    assert.equal(uploadBoundaryResp.status, 400);
+    const uploadBoundaryPayload = await uploadBoundaryResp.json();
+    assert.equal(uploadBoundaryPayload.error, "Missing boundary in Content-Type");
+
+    const badPathResp = await fetch(`http://localhost:${PORT}/api/pipeline/file?path=%E0%A4%A`, {
+      headers: authHeaders,
+    });
+    assert.equal(badPathResp.status, 400);
+    const badPathPayload = await badPathResp.json();
+    assert.equal(badPathPayload.error, "Invalid path");
+  }
 
   const wsUnauth = new WebSocket(`ws://localhost:${PORT}/ws`);
   const closed = await waitForWsClose(wsUnauth);

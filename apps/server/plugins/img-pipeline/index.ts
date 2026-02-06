@@ -78,6 +78,7 @@ const registerImgPipeline = async (api: PluginApi) => {
     api.registerService({
       id: "img-pipeline",
       start: () => {
+        if (!feature.startOnBootstrap) return;
         feature.manager?.start();
       },
       stop: () => {

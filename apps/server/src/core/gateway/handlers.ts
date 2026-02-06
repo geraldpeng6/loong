@@ -1,3 +1,5 @@
+import { relocateAndSwitchSession } from "./session-relocation.js";
+
 export const createGatewayHandlers = ({
   sendAgentRequest,
   createSessionPath,
@@ -88,24 +90,16 @@ export const createGatewayHandlers = ({
     }
 
     let activeSessionFile = sessionFile;
-    const sessionInfo = createSessionPath(agent);
-    const relocateResult = relocateSessionFile(sessionFile, sessionInfo.sessionPath);
-    if (relocateResult.ok) {
-      const switchResp = await sendAgentRequest(agent, {
-        type: "switch_session",
-        sessionPath: sessionInfo.sessionPath,
-      });
-      if (switchResp?.success === false) {
-        console.warn(`[loong] failed to switch session to ${sessionInfo.sessionPath}`);
-      } else {
-        activeSessionFile = sessionInfo.sessionPath;
-      }
-      upsertSessionIndexEntry(agent, sessionInfo);
-    } else if (!relocateResult.missing) {
-      console.warn(
-        `[loong] failed to relocate session file: ${relocateResult.error || "unknown error"}`,
-      );
-    }
+    activeSessionFile = await relocateAndSwitchSession({
+      agent,
+      sourceSessionFile: sessionFile,
+      createSessionPath,
+      relocateSessionFile,
+      upsertSessionIndexEntry,
+      sendAgentRequest,
+      logWarn: console.warn,
+      contextLabel: "new-session command",
+    });
 
     agent.currentSessionFile = activeSessionFile;
     updateSessionMapping(agent, contextKey, activeSessionFile);

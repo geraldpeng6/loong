@@ -1,3 +1,5 @@
+import { relocateAndSwitchSession } from "./session-relocation.js";
+
 export const createSessionFlow = ({
   sendAgentRequest,
   createSessionPath,
@@ -23,15 +25,18 @@ export const createSessionFlow = ({
     if (task.forceNewSession && task.source !== "imessage") {
       await sendAgentRequest(agent, { type: "new_session" });
       const state = await sendAgentRequest(agent, { type: "get_state" });
-      let sessionFile = state?.data?.sessionFile ?? null;
+      const sessionFile = state?.data?.sessionFile ?? null;
       if (sessionFile) {
-        const sessionInfo = createSessionPath(agent);
-        const relocateResult = relocateSessionFile(sessionFile, sessionInfo.sessionPath);
-        if (relocateResult.ok) {
-          sessionFile = sessionInfo.sessionPath;
-          upsertSessionIndexEntry(agent, sessionInfo);
-        }
-        agent.currentSessionFile = sessionFile;
+        agent.currentSessionFile = await relocateAndSwitchSession({
+          agent,
+          sourceSessionFile: sessionFile,
+          createSessionPath,
+          relocateSessionFile,
+          upsertSessionIndexEntry,
+          sendAgentRequest,
+          logWarn,
+          contextLabel: "force-new-session",
+        });
       }
       return agent.currentSessionFile;
     }
@@ -72,16 +77,16 @@ export const createSessionFlow = ({
     const state = await sendAgentRequest(agent, { type: "get_state" });
     sessionFile = state?.data?.sessionFile ?? null;
     if (sessionFile) {
-      const sessionInfo = createSessionPath(agent);
-      const relocateResult = relocateSessionFile(sessionFile, sessionInfo.sessionPath);
-      if (relocateResult.ok) {
-        sessionFile = sessionInfo.sessionPath;
-        upsertSessionIndexEntry(agent, sessionInfo);
-      } else if (!relocateResult.missing) {
-        logWarn(
-          `[loong] failed to relocate session file for iMessage: ${relocateResult.error || "unknown error"}`,
-        );
-      }
+      sessionFile = await relocateAndSwitchSession({
+        agent,
+        sourceSessionFile: sessionFile,
+        createSessionPath,
+        relocateSessionFile,
+        upsertSessionIndexEntry,
+        sendAgentRequest,
+        logWarn,
+        contextLabel: "iMessage session",
+      });
       agent.imessageSessions.set(key, sessionFile);
       persistIMessageSessionMap?.(agent);
       await switchToSession();

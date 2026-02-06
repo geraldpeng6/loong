@@ -46,6 +46,7 @@ export type AudioPipelineFeature = {
   transformAgentPayload: (agent: unknown, payload: unknown) => unknown;
   extensions: string[];
   manager: AudioPipelineManager | null;
+  startOnBootstrap: boolean;
 };
 
 export const initAudioPipelineFeature = ({
@@ -190,11 +191,13 @@ export const initAudioPipelineFeature = ({
   const featureDir = dirname(fileURLToPath(import.meta.url));
   const extensionPath = resolve(featureDir, "extension.ts");
   const extensions = currentQueryCmd ? [extensionPath] : [];
+  const startOnBootstrap = enabled && autoStart;
 
   return {
     routes,
     transformAgentPayload,
     extensions,
     manager,
+    startOnBootstrap,
   };
 };
