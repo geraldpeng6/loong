@@ -5,7 +5,6 @@ import PlusIcon from "@/components/ui/plus-icon";
 import RefreshIcon from "@/components/ui/refresh-icon";
 
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { SessionEntry } from "@/types/gateway";
 import type { GatewayStatus } from "@/hooks/useGateway";
@@ -89,7 +88,7 @@ const Sidebar = ({
           </Tooltip>
         </div>
       </div>
-      <ScrollArea className="flex-1 px-2 py-3 sm:px-3">
+      <div className="flex-1 min-h-0 px-2 py-3 sm:px-3">
         <SessionList
           sessions={sessions}
           currentSessionPath={currentSessionPath}
@@ -97,7 +96,7 @@ const Sidebar = ({
           onRename={onRenameSession}
           onDelete={onDeleteSession}
         />
-      </ScrollArea>
+      </div>
     </aside>
   );
 };
