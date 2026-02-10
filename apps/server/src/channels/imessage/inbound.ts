@@ -76,6 +76,7 @@ export interface CreateIMessageInboundOptions {
   enabled?: boolean;
   defaultAgentId?: string;
   allowlist?: string[];
+  isRecentOutboundEcho?: (params: { text: string; chatId?: number; sender?: string }) => boolean;
   resolveContextKey?: (params: { chatId?: number; sender?: string }) => string;
   resolveAgentFromText?: (text: string, currentAgentId: string) => ResolvedAgent | null;
   resolveCommand?: (text: string) => GatewayCommand | null;
@@ -102,6 +103,7 @@ export const createIMessageInbound = ({
   enabled = false,
   defaultAgentId,
   allowlist = [],
+  isRecentOutboundEcho,
   resolveContextKey = defaultResolveContextKey,
   resolveAgentFromText,
   resolveCommand,
@@ -216,6 +218,10 @@ export const createIMessageInbound = ({
     }
 
     const chatId = message.chat_id ?? undefined;
+    if (text && isRecentOutboundEcho?.({ text, chatId, sender })) {
+      logger.log?.(`[loong] ignoring imessage self-echo from ${sender || "unknown"}`);
+      return;
+    }
     const contextKey = resolveContextKey({ sender, chatId });
     const context = contexts.get(contextKey);
     const currentAgentId = context?.agentId || defaultAgentId || "";

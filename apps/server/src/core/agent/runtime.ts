@@ -75,6 +75,13 @@ export const createAgentRuntimeFactory = ({
       mkdirSync(config.memoryDir, { recursive: true });
     }
 
+    const defaultProvider =
+      typeof env.LOONG_DEFAULT_PROVIDER === "string" ? env.LOONG_DEFAULT_PROVIDER.trim() : "";
+    const defaultModelId =
+      typeof env.LOONG_DEFAULT_MODEL === "string" ? env.LOONG_DEFAULT_MODEL.trim() : "";
+    const defaultThinkingLevel =
+      typeof env.LOONG_DEFAULT_THINKING === "string" ? env.LOONG_DEFAULT_THINKING.trim() : "";
+
     const args = [...piBaseArgs, "--mode", "rpc", "--session-dir", config.sessionDir];
     const internalExtensions = resolveInternalExtensionPaths?.() ?? [];
     for (const extensionPath of internalExtensions) {
@@ -90,14 +97,18 @@ export const createAgentRuntimeFactory = ({
     } else if (config.appendSystemPrompt) {
       args.push("--append-system-prompt", config.appendSystemPrompt);
     }
-    if (config.model?.provider) {
-      args.push("--provider", config.model.provider);
+    const resolvedProvider = config.model?.provider || defaultProvider;
+    const resolvedModelId = config.model?.modelId || defaultModelId;
+    const resolvedThinkingLevel = config.thinkingLevel || defaultThinkingLevel;
+
+    if (resolvedProvider) {
+      args.push("--provider", resolvedProvider);
     }
-    if (config.model?.modelId) {
-      args.push("--model", config.model.modelId);
+    if (resolvedModelId) {
+      args.push("--model", resolvedModelId);
     }
-    if (config.thinkingLevel) {
-      args.push("--thinking", config.thinkingLevel);
+    if (resolvedThinkingLevel) {
+      args.push("--thinking", resolvedThinkingLevel);
     }
     if (Array.isArray(config.tools)) {
       if (config.tools.length === 0) {

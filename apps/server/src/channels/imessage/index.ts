@@ -109,6 +109,59 @@ export const createIMessageChannel = ({
 
   let bridge: IMessageBridge | null = null;
   let cleanupTimer: NodeJS.Timeout | null = null;
+  const recentOutboundText = new Map<string, number>();
+  const RECENT_OUTBOUND_ECHO_TTL_MS = 12_000;
+
+  const normalizeEchoText = (value: string) => value.trim().replace(/\s+/g, " ");
+  const buildEchoKey = ({
+    text,
+    chatId,
+    sender,
+  }: {
+    text: string;
+    chatId?: number;
+    sender?: string;
+  }) => `${chatId ?? "na"}|${sender ?? "na"}|${normalizeEchoText(text)}`;
+  const pruneRecentOutbound = (now = Date.now()) => {
+    for (const [key, ts] of recentOutboundText.entries()) {
+      if (now - ts > RECENT_OUTBOUND_ECHO_TTL_MS) {
+        recentOutboundText.delete(key);
+      }
+    }
+  };
+  const recordOutboundText = ({
+    text,
+    chatId,
+    sender,
+  }: {
+    text: string;
+    chatId?: number;
+    sender?: string;
+  }) => {
+    const normalized = normalizeEchoText(text);
+    if (!normalized) return;
+    const now = Date.now();
+    pruneRecentOutbound(now);
+    recentOutboundText.set(buildEchoKey({ text: normalized, chatId, sender }), now);
+  };
+  const isRecentOutboundEcho = ({
+    text,
+    chatId,
+    sender,
+  }: {
+    text: string;
+    chatId?: number;
+    sender?: string;
+  }) => {
+    const normalized = normalizeEchoText(text);
+    if (!normalized) return false;
+    const now = Date.now();
+    pruneRecentOutbound(now);
+    const key = buildEchoKey({ text: normalized, chatId, sender });
+    const ts = recentOutboundText.get(key);
+    if (!ts) return false;
+    return now - ts <= RECENT_OUTBOUND_ECHO_TTL_MS;
+  };
 
   const cleanupOutboundDir = () => {
     if (!outboundDir) return;
@@ -159,6 +212,7 @@ export const createIMessageChannel = ({
     region,
     formatAgentReply,
     extractAssistantText,
+    recordOutboundText,
     logger,
   });
 
@@ -166,6 +220,7 @@ export const createIMessageChannel = ({
     enabled,
     defaultAgentId,
     allowlist,
+    isRecentOutboundEcho,
     resolveContextKey,
     resolveAgentFromText,
     resolveCommand,

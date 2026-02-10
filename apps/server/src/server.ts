@@ -62,7 +62,13 @@ const resolveLocalPiCmd = () => {
   return candidates.find((candidate) => existsSync(candidate)) || null;
 };
 
-const PI_CMD = process.env.PI_CMD || resolveLocalPiCmd() || "pi";
+const resolveGlobalPiCmd = () => {
+  const binName = process.platform === "win32" ? "pi.exe" : "pi";
+  const candidate = join(homedir(), ".bun", "bin", binName);
+  return existsSync(candidate) ? candidate : null;
+};
+
+const PI_CMD = process.env.PI_CMD || resolveGlobalPiCmd() || resolveLocalPiCmd() || "pi";
 const PI_CWD = process.env.PI_CWD || resolve(__dirname, "..", "..");
 const PI_AGENTS_DIR = process.env.PI_AGENTS_DIR || join(homedir(), ".pi", "agent", "agents");
 const TEMPLATE_AGENTS_DIR = join(PROJECT_ROOT, "templates", "agents");

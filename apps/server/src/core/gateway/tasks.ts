@@ -257,15 +257,6 @@ export const createTaskRunner = ({
     }
 
     try {
-      if (task.onStart) {
-        try {
-          await task.onStart();
-        } catch (err) {
-          const startMessage = err instanceof Error ? err.message : String(err);
-          console.error(`[loong] task ${task.id} onStart failed: ${startMessage}`);
-        }
-      }
-
       const sessionFile = await ensureAgentSession?.(agent, task);
       if (task.subagentRunId && subagentRuns) {
         const run = subagentRuns.get(task.subagentRunId);
